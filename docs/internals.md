@@ -67,7 +67,10 @@ through an AVAudioUnitTimePitch (pitch kept, at most 6 %, rate change at most
 50 ms queue. This takes about 6 s. The unit is bit-exact at rate 1, so steady
 playback is unchanged. A skip, seek, or pause during the ease ends it at once.
 Stems need about 215 ms of delay, so the first stem mix after a cold start
-arrives after about 3–4 s. The `ease` stage checks this without a worker. Within
+arrives after about 3–4 s. Stems enter only after three results in a row arrive
+fully on time, then fade in over 200 ms. A coverage gap closes that gate again.
+Without it, partly late results during the ease made stems flicker against
+Original about ten times a second. The `ease` stage checks this without a worker. Within
 captured playback, Original and stems use the same source frames.
 
 Capture history is bounded to three seconds and compacts to two seconds. Ready

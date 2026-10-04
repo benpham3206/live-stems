@@ -28,6 +28,12 @@ final class StemPipeline {
   // until the delay reaches lagFrames. Calibration knobs: cushion and depth.
   let easeCushionFrames = 1323, easePrimeFrames = 662, easeMaxSlowdown: Float = 0.06
   private(set) var easing = false, easeRate: Float = 1
+  // Stems enter only after entryStreak results in a row arrive fully on time,
+  // then fade in over entryFade. A coverage gap closes the gate again, so
+  // partly late results (startup, a busy GPU) stay on the stem-free mix
+  // instead of flickering between stems and Original ten times a second.
+  let entryFade = 8820, entryStreak = 3
+  private var gated = true, entering = false, onTimeStreak = 0
   var timings = [Double]()
   private var history = [Float](), ready = [Chunk]()
   private var provisional: Chunk?
@@ -168,6 +174,7 @@ final class StemPipeline {
     if !value { resetProcessor() }
   }
   func resetProcessor() {
+    closeGate()
     generation += 1; version += 1
     contextStart = max(base, end - windowFrames)
     scheduledEnd = contextStart
@@ -175,7 +182,11 @@ final class StemPipeline {
     provisional = nil; wasProvisional = false; tailScanning = false
     onTrace?(TraceRecord(event: "processor-reset", generation: generation, sourceFrame: outputPosition))
   }
+  /// E2E fixtures that test seams, not entry, start with stems already admitted.
+  func e2eOpenStemGate() { gated = false; entering = false; onTimeStreak = entryStreak }
+  private func closeGate() { gated = true; entering = false; onTimeStreak = 0 }
   private func resetContext(at frame: Int, flush: Bool, host: Double = stemClock(), scan: Bool = false) {
+    closeGate()
     version += 1; contextStart = frame; scheduledEnd = frame
     ready.removeAll { flush || $0.range.upperBound > frame }
     if flush {
@@ -234,6 +245,7 @@ final class StemPipeline {
     // the commit frontier already played; the rest must not fall back.
     let coreLo = max(job.core.lowerBound, outputPosition)
     if coreLo > job.core.lowerBound {
+      onTimeStreak = 0
       partialResults += 1
       onTrace?(TraceRecord(event: "partial-late", generation: generation, sourceFrame: outputPosition,
         sourceEnd: job.core.upperBound, windowStart: result.range.start, lateFrames: coreLo - job.core.lowerBound))
@@ -278,9 +290,24 @@ final class StemPipeline {
         samples: Array(result.samples[at..<at + (job.window.upperBound - tailLo) * 8]))
     } else { provisional = nil }
     acceptedResults += 1
+    if coreLo == job.core.lowerBound {
+      onTimeStreak += 1
+      if gated, onTimeStreak >= entryStreak { gated = false; entering = true }
+    }
     onTrace?(TraceRecord(event: "accepted-result", generation: generation,
       sourceFrame: coreLo, sourceEnd: job.core.upperBound,
       windowStart: result.range.start, deadlineSlackSeconds: Double(job.core.lowerBound - outputPosition) / 44100))
+  }
+  /// Weight for a frame that has stems. Gated: fade out slowly. Entering: fade
+  /// in slowly. Otherwise the 10 ms seam blend between neighbouring estimates.
+  private func blend(toward target: Float) {
+    if gated { weight = max(0, weight - 1 / Float(entryFade)); return }
+    if entering {
+      weight = min(target, weight + 1 / Float(entryFade))
+      if weight >= 1 { entering = false }
+      return
+    }
+    weight += max(-1 / Float(fade), min(1 / Float(fade), target - weight))
   }
   private func block(start: Int, count: Int) -> [Float] {
     var samples = [Float](repeating: 0, count: count * 11)
@@ -293,20 +320,19 @@ final class StemPipeline {
       if let index = ready.firstIndex(where: { $0.range.contains(frame) }) {
         var lo = index
         while lo > 0 && ready[lo - 1].range.upperBound == ready[lo].range.lowerBound { lo -= 1 }
-        let target = min(1, max(Float(frame - ready[lo].range.lowerBound + 1) / Float(fade), weight))
-        weight += max(-1 / Float(fade), min(1 / Float(fade), target - weight))
+        blend(toward: min(1, max(Float(frame - ready[lo].range.lowerBound + 1) / Float(fade), weight)))
         let offset = (frame - ready[index].range.lowerBound) * 8
         for channel in 0..<8 { samples[out + channel] = ready[index].samples[offset + channel] }
         usedProvisional = false
       } else if let tail = provisional, tail.range.contains(frame) {
         // A late result falls back to the previous tail estimate, never to
         // the full mix. The next result replaces these frames on arrival.
-        let target = min(1, max(Float(frame - tail.range.lowerBound + 1) / Float(fade), weight))
-        weight += max(-1 / Float(fade), min(1 / Float(fade), target - weight))
+        blend(toward: min(1, max(Float(frame - tail.range.lowerBound + 1) / Float(fade), weight)))
         let offset = (frame - tail.range.lowerBound) * 8
         for channel in 0..<8 { samples[out + channel] = tail.samples[offset + channel] }
         usedProvisional = true
       } else {
+        if weight > 0 { closeGate() }
         weight = 0
         usedProvisional = false
       }

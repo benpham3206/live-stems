@@ -46,6 +46,7 @@ enum StreamMixerChecks {
       commits.filter { range.contains($0.frame) }.map(\.weight)
     }
     drive(88200)
+    pipeline.e2eOpenStemGate()  // this check is about late tails, not entry
     guard let first = pipeline.job() else { throw StemError("Provisional check built no first window") }
     let tailStart = Int(first.range.start) + 44100 - 2205, tailEnd = Int(first.range.start) + 44100
     pipeline.accept(stems(for: first))
@@ -174,6 +175,30 @@ enum StreamMixerChecks {
       }, hostTime: stemClock())
       pipeline.step()
     }
+    // A worker that answers 70 ms after each request, like the real model. With
+    // the delay still small, early answers are partly late: stems must not flicker.
+    var pending = [(due: Int, window: AudioWindow)](), clock = 0
+    var gaps = 0, maxRise: Float = 0, lastWeight: Float = 0, entered = false
+    pipeline.onTrace = { if $0.event == "coverage-gap" { gaps += 1 } }
+    pipeline.onCommit = { _, block in
+      for f in 0..<block.count / 11 {
+        let w = block[f * 11 + 10]
+        maxRise = max(maxRise, w - lastWeight); lastWeight = w
+        if w >= 0.999 { entered = true }
+      }
+    }
+    func work() {
+      clock += 1
+      if let window = pipeline.job() { pending.append((clock + 7, window)) }
+      while let job = pending.first, job.due <= clock {
+        pending.removeFirst()
+        var out = [Float](repeating: 0, count: job.window.samples.count * 4)
+        for f in 0..<job.window.samples.count / 2 {
+          out[f * 8] = job.window.samples[f * 2]; out[f * 8 + 1] = job.window.samples[f * 2 + 1]
+        }
+        pipeline.accept(StemWindow(range: job.window.range, samples: out))
+      }
+    }
     for _ in 0..<30 { tick() }  // 300 ms of capture while Spotify still plays directly
     let liveEdge = pipeline.end
     pipeline.beginEase()
@@ -182,6 +207,7 @@ enum StreamMixerChecks {
     var rendered = [Int](), owed = 0.0, minRate: Float = 1, maxStep: Float = 0, lastRate = pipeline.easeRate
     var endedAfter: Double?
     for t in 0..<1500 {  // 15 s
+      work()
       tick()
       minRate = min(minRate, pipeline.easeRate)
       maxStep = max(maxStep, abs(pipeline.easeRate - lastRate)); lastRate = pipeline.easeRate
@@ -197,6 +223,11 @@ enum StreamMixerChecks {
     let continuous = zip(settled, settled.dropFirst()).allSatisfy { $1 == $0 + 1 }
     let finalLatency = pipeline.end - (rendered.last ?? 0)
     let underruns = ls_underruns(core)
+    guard entered else { throw StemError("Stems never entered during the ease check") }
+    guard gaps == 0 else { throw StemError("Stems flickered: \(gaps) drops back to Original after entering") }
+    guard maxRise <= 1 / Float(pipeline.entryFade) + 1e-6 else {
+      throw StemError("Stems entered too fast: weight rose \(maxRise) in one frame")
+    }
     guard replay <= pipeline.easeCushionFrames + 441 else { throw StemError("Ease replayed \(replay) frames at handoff") }
     guard continuous else { throw StemError("Ease render repeated or skipped a frame") }
     guard underruns == 0 else { throw StemError("Ease render underran \(underruns) times") }
@@ -207,7 +238,7 @@ enum StreamMixerChecks {
     guard minRate >= 1 - pipeline.easeMaxSlowdown - 0.0001, maxStep <= 0.0021 else {
       throw StemError("Ease rate left its bounds: min \(minRate), step \(maxStep)")
     }
-    return ["checked": true, "pass": true, "handoff_replay_ms": Double(replay) / 44.1,
+    return ["checked": true, "pass": true, "handoff_replay_ms": Double(replay) / 44.1, "stem_flicker_gaps": gaps,
       "ease_seconds": ended, "final_latency_ms": Double(finalLatency) / 44.1,
       "min_rate": minRate, "max_rate_step": maxStep, "underruns": underruns]
   }
