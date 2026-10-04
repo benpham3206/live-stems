@@ -1,0 +1,56 @@
+{
+  "worker_positive_starts": [
+    0,
+    60,
+    170
+  ],
+  "worker_seconds": 1.0,
+  "failure_cases": [
+    "missing_cache",
+    "truncated_packet",
+    "bad_version",
+    "oversize_packet",
+    "nan_input",
+    "wrong_rate",
+    "worker_exit",
+    "stop_before_launch",
+    "worker_frozen_during_request",
+    "reset_while_callback_runs"
+  ],
+  "joins": 100,
+  "render_failures": [
+    "buffer_wrap",
+    "mute_and_solo",
+    "late_result",
+    "old_generation",
+    "out_of_order_result",
+    "quiet_boundary",
+    "device_loss",
+    "partial_start_cleanup"
+  ],
+  "live_failures": [
+    "worker_kill",
+    "quit_during_loading",
+    "seek_during_inference",
+    "rapid_track_changes",
+    "permission_denial",
+    "output_disconnect",
+    "spotify_relaunch",
+    "app_termination"
+  ],
+  "history_seconds": 3,
+  "delay_seconds": 0.26,
+  "stream_window_seconds": 1.0,
+  "stream_hop_seconds": 0.1,
+  "stream_right_context_seconds": 0.05,
+  "stream_duration_seconds": 40,
+  "stream_source_offsets_seconds": [
+    60,
+    100,
+    180
+  ],
+  "stream_waveform_offset_seconds": 0.30,
+  "stream_history_seconds": 3,
+  "stream_cache_limit_bytes": 8388608,
+  "sustained_seconds": 900
+}
