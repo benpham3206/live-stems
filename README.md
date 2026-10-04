@@ -100,7 +100,7 @@ The first second plays the normal song while the model gets ready. After that, e
   - all four stems at the same volume (untouched, all muted, or all at the same level),
   - Spotify paused.
 
-  The status line tells you which: *Live stems*, *Original · model asleep*, *All stems muted · model asleep*.
+  The status line tells you which: *Live stems*, *Original · model asleep*, *Muted · model asleep*.
 - **Reset** returns every control to normal and brings the stem splitter back, for example after you
   reopen the app during a Quit. With nothing changed, the model then sleeps.
 - **Skip, seek and pause** in Spotify as usual. Live Stems follows along and rebuilds the stems for the new spot.

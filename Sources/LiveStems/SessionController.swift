@@ -262,7 +262,7 @@ final class SessionController {
     if !stemsSelected { return "Original mix · model asleep" }
     if pipeline.resting {
       let gain = controls.effectiveGains[0]
-      if gain == 0 { return "All stems muted · model asleep" }
+      if gain == 0 { return "Muted · model asleep" }
       return gain == 1 ? "Original · model asleep" : "Original at \(Int(gain * 100))% · model asleep"
     }
     return pipeline.statusText
