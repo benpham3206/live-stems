@@ -503,6 +503,9 @@ enum StreamE2E {
       forWriting: out.appendingPathComponent("stream-rendered.wav"), settings: settings))
 
     var controls = try StreamMixerChecks.run(probe.fixture, rate: rate, out: out)
+    let tail = try StreamMixerChecks.provisional()
+    controls["provisional_tail"] = tail
+    controls["pass"] = controls["pass"] as? Bool == true && tail["pass"] as? Bool == true
     let pacedControls = renderEvidence.check(rendered: probe.rendered, expected: probe.expected)
     controls["paced"] = pacedControls
     controls["pass"] = controls["pass"] as? Bool == true && pacedControls["pass"] as? Bool == true

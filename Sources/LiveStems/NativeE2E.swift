@@ -123,6 +123,8 @@ enum NativeE2E {
       try ReturnE2E.run(out)
     case "capture-cut":
       try CaptureCutE2E.run(out)
+    case "skip-probe":
+      try SkipProbeE2E.run(out)
     case "quit":
       try QuitE2E.run(out)
     case "quit-race":

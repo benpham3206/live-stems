@@ -2,6 +2,101 @@ import AudioCore
 import Foundation
 
 enum StreamMixerChecks {
+  // Worker-free proof that a late result falls back to the previous tail
+  // estimate instead of Original. Synthetic sine in, deterministic gates out.
+  static func provisional() throws -> [String: Any] {
+    guard let core = ls_create(44100, 44100) else {
+      throw StemError("Cannot allocate provisional check core")
+    }
+    defer { ls_destroy(core) }
+    let pipeline = StemPipeline(core: core)
+    var events = [(String, Int)]()
+    pipeline.onTrace = { events.append(($0.event, $0.sourceFrame ?? -1)) }
+    var commits = [(frame: Int, weight: Float, vocals: Float)]()
+    pipeline.onCommit = { start, block in
+      for f in 0..<block.count / 11 {
+        commits.append((start + f, block[f * 11 + 10], block[f * 11]))
+      }
+    }
+    pipeline.start(generation: 1)
+    pipeline.observe(PlaybackSnapshot(trackID: "tail", title: "Tail", duration: 60,
+      position: 0, isPlaying: true), hostTime: stemClock())
+    func synth(_ count: Int) -> [Float] {
+      let from = pipeline.end
+      var out = [Float]()
+      out.reserveCapacity(count * 2)
+      for f in 0..<count {
+        let v = Float(sin(Double(from + f) * 2 * .pi * 440 / 44100)) * 0.5
+        out.append(v); out.append(-v)
+      }
+      return out
+    }
+    func stems(for window: AudioWindow) -> StemWindow {
+      var out = [Float](repeating: 0, count: window.samples.count * 4)
+      for f in 0..<window.samples.count / 2 {
+        out[f * 8] = window.samples[f * 2]; out[f * 8 + 1] = window.samples[f * 2 + 1]
+      }
+      return StemWindow(range: window.range, samples: out)
+    }
+    func drive(_ count: Int) {
+      pipeline.ingest(synth(count), hostTime: stemClock())
+      pipeline.step()
+    }
+    func weight(in range: Range<Int>) -> [Float] {
+      commits.filter { range.contains($0.frame) }.map(\.weight)
+    }
+    drive(88200)
+    guard let first = pipeline.job() else { throw StemError("Provisional check built no first window") }
+    let tailStart = Int(first.range.start) + 44100 - 2205, tailEnd = Int(first.range.start) + 44100
+    pipeline.accept(stems(for: first))
+    guard pipeline.acceptedResults == 1, pipeline.discarded == 0 else {
+      throw StemError("Provisional check lost its on-time result")
+    }
+    // Hold the next window: the frontier crosses the tail with no result, so
+    // the tail estimate must carry those frames as stems, never Original.
+    drive(13230)
+    let tailWeights = weight(in: tailStart + 5..<tailEnd - 5)
+    guard tailWeights.count == tailEnd - tailStart - 10,
+      tailWeights.min() ?? 0 > 0.5
+    else { throw StemError("Late result fell back to Original inside the tail estimate") }
+    guard events.contains(where: { $0.0 == "provisional-cover" && tailStart..<tailEnd ~= $0.1 }) else {
+      throw StemError("Provisional cover left no trace")
+    }
+    for f in stride(from: tailStart + 100, to: tailStart + 105, by: 1) {
+      guard let commit = commits.first(where: { $0.frame == f }),
+        abs(commit.vocals - sine(at: f)) < 1e-5
+      else { throw StemError("Provisional frame did not carry stem content") }
+    }
+    // The held window arrives partly late: its suffix must commit without any
+    // full-Original frame, and the hold must be logged, not hidden.
+    guard let second = pipeline.job() else { throw StemError("Provisional check built no held window") }
+    let heldAt = pipeline.outputPosition
+    pipeline.accept(stems(for: second))
+    guard pipeline.partialResults == 1, pipeline.discarded == 0,
+      events.contains(where: { $0.0 == "partial-late" })
+    else { throw StemError("Partly late result was not accepted as a partial") }
+    drive(4410)
+    let heldWeights = weight(in: heldAt..<pipeline.outputPosition)
+    guard !heldWeights.isEmpty, heldWeights.min() ?? 0 > 0.001,
+      !events.contains(where: { $0.0 == "coverage-gap" && heldAt..<pipeline.outputPosition ~= $0.1 })
+    else { throw StemError("Partly late result left an Original gap inside its estimates") }
+    // A window held past its whole core is fully late: discard and say so.
+    guard let late = pipeline.job() else { throw StemError("Provisional check built no late window") }
+    drive(13230)
+    pipeline.accept(stems(for: late))
+    guard pipeline.lateResults == 1, pipeline.discarded == 1,
+      events.contains(where: { $0.0 == "late-result" })
+    else { throw StemError("Fully late result was not discarded and logged") }
+    return ["checked": true, "pass": true,
+      "tail_frames": tailEnd - tailStart, "tail_min_weight": tailWeights.min() ?? -1,
+      "held_min_weight": heldWeights.min() ?? -1,
+      "partial_results": pipeline.partialResults, "late_results": pipeline.lateResults,
+      "accepted_results": pipeline.acceptedResults, "discarded": pipeline.discarded]
+  }
+
+  static func sine(at frame: Int) -> Float {
+    Float(sin(Double(frame) * 2 * .pi * 440 / 44100)) * 0.5
+  }
   static func run(_ fixture: [Float], rate: Int, out: URL) throws -> [String: Any] {
     let frames = fixture.count / 11
     guard frames >= rate else {

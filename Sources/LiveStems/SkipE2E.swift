@@ -49,7 +49,14 @@ enum SkipE2E {
       }
     }
     appendExpected(4410, 0.45, -0.4)
-    expected.append(contentsOf: [Float](repeating: 0, count: 882 * 2))
+    // A flush keeps the last rendered sample and fades it over 96 frames
+    // (~2 ms), then holds silence through priming. No full-level old audio.
+    let lastLeft = expected[expected.count - 2], lastRight = expected[expected.count - 1]
+    for k in 0..<96 {
+      let gain = Float(96 - 1 - k) / 96
+      expected.append(lastLeft * gain); expected.append(lastRight * gain)
+    }
+    expected.append(contentsOf: [Float](repeating: 0, count: (882 - 96) * 2))
     appendExpected(2205, -0.2, 0.35)
     let expectedFile = try AVAudioFile(forWriting: out.appendingPathComponent("skip-expected.wav"),
       settings: AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!.settings)
@@ -57,7 +64,13 @@ enum SkipE2E {
     let maxError = zip(rendered, expected).map { abs($0 - $1) }.max() ?? 0
     guard maxError < 1e-6 else { throw StemError("Skip waveform mismatch: \(maxError)") }
     let ghostPeak = (gap + held).map(abs).max() ?? 0
-    guard ghostPeak == 0 else { throw StemError("Skip replayed previous de-click sample: \(ghostPeak)") }
+    guard ghostPeak <= max(abs(lastLeft), abs(lastRight)) + 1e-6 else {
+      throw StemError("Skip replayed previous audio above its cut level: \(ghostPeak)")
+    }
+    let postFade = Array((gap + held).dropFirst(96 * 2))
+    guard postFade.allSatisfy({ $0 == 0 }) else {
+      throw StemError("Skip did not reach silence after its 96-frame fade")
+    }
     guard abs(fresh[fresh.count - 2] + 0.2) < 1e-6,
       abs(fresh.last! - 0.35) < 1e-6 else { throw StemError("Skip failed to resume the new source") }
 
@@ -97,7 +110,36 @@ enum SkipE2E {
     guard finished.wait(timeout: .now() + 2) == .success else { throw StemError("Capture race did not finish") }
     let raceRemaining = capture.withUnsafeMutableBufferPointer { ls_capture_read(core, $0.baseAddress, 4096) }
     guard raceRemaining == 0 else { throw StemError("In-flight old capture published after skip: \(raceRemaining) frames") }
-    let report: [String: Any] = ["status": "pass", "old_tail_peak": ghostPeak,
+    // Spotify keeps playing the old track for ~50–100 ms after its notice.
+    // That tail must not reach playback after the post-skip gap.
+    guard let tailCore = ls_create(44100, 44100) else { throw StemError("Tail core unavailable") }
+    defer { ls_destroy(tailCore) }
+    let pipeline = StemPipeline(core: tailCore)
+    var committed = [(frame: Int, left: Float)]()
+    pipeline.onCommit = { start, data in
+      for f in 0..<data.count / 11 { committed.append((start + f, data[f * 11 + 8])) }
+    }
+    pipeline.start(generation: 1)
+    pipeline.observe(PlaybackSnapshot(trackID: "old", title: "", duration: 60, position: 10, isPlaying: true), hostTime: 100)
+    func level(_ count: Int, _ value: Float) -> [Float] { [Float](repeating: value, count: count * 2) }
+    pipeline.ingest(level(88200, 0.5), hostTime: 102)
+    pipeline.step()
+    let cutFrame = pipeline.end
+    guard pipeline.observe(PlaybackSnapshot(trackID: "new", title: "", duration: 60, position: 0, isPlaying: true), hostTime: 102) else {
+      throw StemError("Tail fixture did not register a manual cut")
+    }
+    committed.removeAll()
+    pipeline.ingest(level(3000, 0.5), hostTime: 102.07)
+    pipeline.ingest(level(1000, 0), hostTime: 102.09)
+    pipeline.ingest(level(22050, 0.3), hostTime: 102.6)
+    pipeline.step()
+    guard let first = committed.first, first.frame == cutFrame + 3000,
+      !committed.contains(where: { $0.left == 0.5 }), committed.contains(where: { $0.left == 0.3 }) else {
+      throw StemError("Old-track tail reached playback after the skip: first frame \(committed.first?.frame ?? -1), cut \(cutFrame)")
+    }
+    let report: [String: Any] = ["status": "pass", "cut_fade_frames": 96,
+      "old_tail_frames_trimmed_from_playback": 3000,
+      "cut_fade_peak": ghostPeak,
       "gap_and_prime_frames_checked": 882, "old_unread_capture_discarded": true,
       "new_source_resumed": true, "rendered_wav": "skip-rendered.wav",
       "expected_wav": "skip-expected.wav", "max_sample_error": maxError,

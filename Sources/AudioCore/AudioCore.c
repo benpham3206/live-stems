@@ -21,7 +21,7 @@ struct LSCore {
     atomic_ullong flush_sequence;
     uint64_t render_epoch, applied_flush;
     float last_left, last_right, envelope;
-    int priming;
+    int priming, fade_out;
 };
 static void init_ring(Ring *r, uint32_t n, uint32_t ch) { r->capacity=n; r->channels=ch; r->data=calloc((size_t)n*ch,sizeof(float)); }
 LSCore *ls_create(double cr, double rr) {
@@ -75,7 +75,7 @@ uint32_t ls_output_write_timed(LSCore *c,const float *data,uint32_t n,uint64_t s
 static int next_frame(LSCore *c,float *left,float *right){
     *left=*right=0; if(!atomic_load(&c->enabled))return 0;
     uint64_t epoch=atomic_load(&c->epoch);
-    if(epoch!=c->render_epoch){c->render_epoch=epoch;c->last_left=c->last_right=c->envelope=0;c->stem_blend=atomic_load(&c->stems)?1:0;c->priming=1;}
+    if(epoch!=c->render_epoch){c->render_epoch=epoch;c->last_left=c->last_right=c->envelope=0;c->stem_blend=atomic_load(&c->stems)?1:0;c->priming=1;c->fade_out=0;}
     Ring *r=&c->output;uint64_t pos=atomic_load(&r->read);
     uint64_t sequence=atomic_load(&c->flush_sequence);
     uint64_t flush=atomic_load(&c->flush);
@@ -83,18 +83,26 @@ static int next_frame(LSCore *c,float *left,float *right){
     if(sequence!=c->applied_flush){
         c->applied_flush=sequence;
         if(flush>pos){pos=flush;atomic_store(&r->read,pos);}
-        c->priming=1;c->envelope=0;c->last_left=c->last_right=0;
+        // Keep the last rendered sample and fade it over ~2 ms. The queue
+        // is already gone, so this only softens the cut edge, never audio.
+        c->priming=1;c->envelope=0;c->fade_out=96;
         c->render_trace=(LSRenderSnapshot){.source_frame=UINT64_MAX};
     }
     uint32_t prime=(uint32_t)(c->rate*.05);
     if(pos==end || (c->priming && end-pos<prime)){
-        if(!c->priming){atomic_fetch_add(&c->underruns,1);c->priming=1;c->envelope=0;}
+        if(!c->priming){atomic_fetch_add(&c->underruns,1);c->priming=1;c->envelope=0;c->fade_out=0;}
+        if(c->fade_out>0){
+            float gain=(float)(c->fade_out-1)/96.0f;
+            *left=c->last_left*gain;*right=c->last_right*gain;
+            if(--c->fade_out==0)c->last_left=c->last_right=0;
+            return 0;
+        }
         c->last_left*=.98f;c->last_right*=.98f;
         if(fabsf(c->last_left)<1e-7f)c->last_left=0;
         if(fabsf(c->last_right)<1e-7f)c->last_right=0;
         *left=c->last_left;*right=c->last_right;return 0;
     }
-    c->priming=0;c->envelope=fminf(1,c->envelope+(float)(1.0/(c->rate*.0025)));
+    c->priming=0;c->fade_out=0;c->envelope=fminf(1,c->envelope+(float)(1.0/(c->rate*.0025)));
     float *f=r->data+(pos%r->capacity)*11;uint32_t mute=atomic_load(&c->mute),solo=atomic_load(&c->solo);
     float blend_target=atomic_load(&c->stems)?1:0;
     c->stem_blend+=fmaxf(-(float)(1.0/(c->rate*.008)),fminf((float)(1.0/(c->rate*.008)),blend_target-c->stem_blend));
