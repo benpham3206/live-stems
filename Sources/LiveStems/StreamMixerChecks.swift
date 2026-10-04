@@ -211,6 +211,126 @@ enum StreamMixerChecks {
       "ease_seconds": ended, "final_latency_ms": Double(finalLatency) / 44.1,
       "min_rate": minRate, "max_rate_step": maxStep, "underruns": underruns]
   }
+  // Seeded transition fuzz: skips, seeks, pauses, duplicate notices, model
+  // sleep/wake, late results, and the startup ease, in random order. Playback
+  // must never go backward, underrun outside a transition, overflow, or fail to
+  // settle at the steady delay. Simulated host time, so it runs faster than real time.
+  static func transitions(seed: UInt64, seconds: Int = 60) throws -> [String: Any] {
+    guard let core = ls_create(44100, 44100) else { throw StemError("Cannot allocate fuzz core") }
+    defer { ls_destroy(core) }
+    var rng = seed
+    func roll(_ n: Int) -> Int {
+      rng = rng &* 6364136223846793005 &+ 1442695040888963407
+      return Int((rng >> 33) % UInt64(n))
+    }
+    let pipeline = StemPipeline(core: core)
+    var failure: String?
+    pipeline.onFailure = { failure = $0 }
+    pipeline.start(generation: 1)
+    var host = 1000.0, track = 0, position = 30.0, playing = true
+    func snapshot() -> PlaybackSnapshot {
+      PlaybackSnapshot(trackID: "t\(track)", title: "T", duration: 240, position: position, isPlaying: playing)
+    }
+    _ = pipeline.observe(snapshot(), hostTime: host)
+    var pending = [(due: Int, window: AudioWindow)]()
+    var lastRendered: UInt64 = 0, unexpectedUnderruns = 0, events = [String: Int](), quietUntil = 0
+    var handedOff = false, owed = 0.0, lastUnderruns: UInt64 = 0
+    var handoff: (tick: Int, liveEdge: Int)?  // checked only when Spotify was playing
+    let ticks = seconds * 100, tail = 1500
+    for t in 0..<(ticks + tail) {
+      host += 0.01
+      let calm = t >= ticks
+      if !calm {
+        switch roll(1000) {
+        case 0..<4:  // skip to a new track
+          track += 1; position = 0; events["skip", default: 0] += 1
+          _ = pipeline.observe(snapshot(), hostTime: host); quietUntil = t + 100
+        case 4..<6:  // seek within the track
+          position += Double(roll(60)) + 1; events["seek", default: 0] += 1
+          _ = pipeline.observe(snapshot(), hostTime: host); quietUntil = t + 100
+        case 6..<8:  // pause or resume
+          playing.toggle(); events[playing ? "resume" : "pause", default: 0] += 1
+          _ = pipeline.observe(snapshot(), hostTime: host); quietUntil = t + 100
+        case 8..<10:  // duplicate notice for the last skip
+          events["duplicate", default: 0] += 1
+          _ = pipeline.observe(snapshot(), hostTime: host)
+        case 10..<25:  // the mix changes, so the model sleeps or wakes
+          pipeline.setResting(roll(2) == 0); events["rest_toggle", default: 0] += 1
+        default: break
+        }
+        if !handedOff, pipeline.end > 2000, roll(30) == 0 {
+          if playing { handoff = (t, pipeline.end) }
+          pipeline.beginEase(); pipeline.step(); ls_enable(core, 1); handedOff = true; quietUntil = t + 100
+          events["ease", default: 0] += 1
+        }
+      } else if !playing {
+        playing = true; _ = pipeline.observe(snapshot(), hostTime: host); quietUntil = t + 100
+      }
+      if !handedOff, calm { handoff = (t, pipeline.end); pipeline.beginEase(); pipeline.step(); ls_enable(core, 1); handedOff = true; quietUntil = t + 100 }
+      if playing {  // capture stalls while Spotify is paused
+        position += 0.01
+        let from = pipeline.end
+        pipeline.ingest((0..<441).flatMap { f -> [Float] in
+          let v = Float(sin(Double(from + f) * 0.031)) * 0.4
+          return [v, -v]
+        }, hostTime: host)
+      }
+      // A fake worker answers on time, a little late, or past its deadline.
+      if let window = pipeline.job() {
+        let delay = [0, 1, 3, 6, 25][roll(5)]
+        pending.append((t + delay, window))
+      }
+      for (index, job) in pending.enumerated().reversed() where job.due <= t {
+        var out = [Float](repeating: 0, count: job.window.samples.count * 4)
+        for f in 0..<job.window.samples.count / 2 {
+          out[f * 8] = job.window.samples[f * 2]; out[f * 8 + 1] = job.window.samples[f * 2 + 1]
+        }
+        pipeline.accept(StemWindow(range: job.window.range, samples: out))
+        pending.remove(at: index)
+      }
+      pipeline.step()
+      if handedOff {
+        owed += 441 * Double(pipeline.easeRate)
+        let take = Int(owed); owed -= Double(take)
+        _ = StreamE2E.readMix(core, frames: take)
+        let rendered = ls_rendered_source_frame(core)
+        if let start = handoff {  // startup: play at once, from the live edge
+          guard rendered != UInt64.max || t - start.tick < 2 else {
+            throw StemError("seed \(seed) t=\(t): no playback 20 ms after the handoff")
+          }
+          if rendered != UInt64.max {
+            let firstFrame = Int(rendered) - Int(441 * pipeline.easeRate)
+            guard start.liveEdge - firstFrame <= pipeline.easeCushionFrames + 441 else {
+              throw StemError("seed \(seed): handoff replayed \(start.liveEdge - firstFrame) frames")
+            }
+            handoff = nil
+          }
+        }
+        if rendered != UInt64.max {
+          guard rendered >= lastRendered else {
+            throw StemError("seed \(seed) t=\(t): playback went back from \(lastRendered) to \(rendered)")
+          }
+          lastRendered = rendered
+        }
+        let underruns = ls_underruns(core)
+        if underruns > lastUnderruns, t > quietUntil, playing { unexpectedUnderruns += Int(underruns - lastUnderruns) }
+        lastUnderruns = underruns
+      }
+      // Before the handoff output is off and nothing plays; the app hands off ~40 ms in.
+      guard !handedOff || ls_queued(core) <= UInt32(pipeline.lagFrames + 8820), ls_overflows(core) == 0 else {
+        throw StemError("seed \(seed) t=\(t): output queue \(ls_queued(core)) overflowed its bound")
+      }
+      if let failure { throw StemError("seed \(seed) t=\(t): pipeline failed: \(failure)") }
+    }
+    let latency = pipeline.end - Int(lastRendered)
+    guard unexpectedUnderruns == 0 else { throw StemError("seed \(seed): \(unexpectedUnderruns) underruns outside transitions") }
+    guard !pipeline.easing else { throw StemError("seed \(seed): ease still running after 15 calm seconds") }
+    guard abs(latency - (pipeline.lagFrames + 2205)) <= 2205 else {
+      throw StemError("seed \(seed): settled at latency \(latency) frames")
+    }
+    return ["seed": seed, "events": events, "settled_latency_ms": Double(latency) / 44.1,
+      "late_results": pipeline.lateResults, "accepted": pipeline.acceptedResults]
+  }
   static func sine(at frame: Int) -> Float {
     Float(sin(Double(frame) * 2 * .pi * 440 / 44100)) * 0.5
   }

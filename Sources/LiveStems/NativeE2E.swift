@@ -135,6 +135,12 @@ enum NativeE2E {
       try recovery(out)
     case "snapshot":
       try MenuE2E.snapshot(out)
+    case "transitions":
+      var runs = [[String: Any]]()
+      for seed in UInt64(1)...25 { runs.append(try StreamMixerChecks.transitions(seed: seed)) }
+      try JSONSerialization.data(withJSONObject: runs, options: [.prettyPrinted, .sortedKeys])
+        .write(to: out.appendingPathComponent("transitions.json"))
+      print("PASS transitions · 25 seeds × 75 s of random skips, seeks, pauses, sleeps, late results")
     case "ease":
       let report = try StreamMixerChecks.ease()
       try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
