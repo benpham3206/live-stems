@@ -206,7 +206,7 @@ enum StreamMixerChecks {
     ls_enable(core, 1)
     var rendered = [Int](), owed = 0.0, minRate: Float = 1, maxStep: Float = 0, lastRate = pipeline.easeRate
     var endedAfter: Double?
-    for t in 0..<1500 {  // 15 s
+    for t in 0..<4000 {  // 40 s
       work()
       tick()
       minRate = min(minRate, pipeline.easeRate)
@@ -231,7 +231,7 @@ enum StreamMixerChecks {
     guard replay <= pipeline.easeCushionFrames + 441 else { throw StemError("Ease replayed \(replay) frames at handoff") }
     guard continuous else { throw StemError("Ease render repeated or skipped a frame") }
     guard underruns == 0 else { throw StemError("Ease render underran \(underruns) times") }
-    guard let ended = endedAfter, ended < 10 else { throw StemError("Ease did not finish within 10 s") }
+    guard let ended = endedAfter, ended < 30 else { throw StemError("Ease did not finish within 30 s") }
     guard abs(finalLatency - (pipeline.lagFrames + 2205)) <= 882 else {
       throw StemError("Ease ended at latency \(finalLatency) frames")
     }
@@ -258,6 +258,7 @@ enum StreamMixerChecks {
     var failure: String?
     pipeline.onFailure = { failure = $0 }
     pipeline.start(generation: 1)
+    pipeline.holdForBreak()  // like the live session: Spotify direct until takeover
     var host = 1000.0, track = 0, position = 30.0, playing = true
     func snapshot() -> PlaybackSnapshot {
       PlaybackSnapshot(trackID: "t\(track)", title: "T", duration: 240, position: position, isPlaying: playing)
@@ -267,6 +268,7 @@ enum StreamMixerChecks {
     var lastRendered: UInt64 = 0, unexpectedUnderruns = 0, events = [String: Int](), quietUntil = 0
     var handedOff = false, owed = 0.0, lastUnderruns: UInt64 = 0
     var handoff: (tick: Int, liveEdge: Int)?  // checked only when Spotify was playing
+    var breakEdge: Int?  // a break takeover may replay nothing at all
     let ticks = seconds * 100, tail = 1500
     for t in 0..<(ticks + tail) {
       host += 0.01
@@ -289,7 +291,12 @@ enum StreamMixerChecks {
           pipeline.setResting(roll(2) == 0); events["rest_toggle", default: 0] += 1
         default: break
         }
-        if !handedOff, pipeline.end > 2000, roll(30) == 0 {
+        if !handedOff, pipeline.paused || pipeline.breakPending {
+          breakEdge = pipeline.end
+          pipeline.takeOverAtBreak(); pipeline.step(); ls_enable(core, 1); handedOff = true; quietUntil = t + 100
+          events["break_takeover", default: 0] += 1
+        }
+        if !handedOff, pipeline.end > 2000, roll(400) == 0 {  // stems wanted before any break
           if playing { handoff = (t, pipeline.end) }
           pipeline.beginEase(); pipeline.step(); ls_enable(core, 1); handedOff = true; quietUntil = t + 100
           events["ease", default: 0] += 1
@@ -337,6 +344,12 @@ enum StreamMixerChecks {
             handoff = nil
           }
         }
+        if let edge = breakEdge, rendered != UInt64.max {
+          guard Int(rendered) - 441 >= edge - 64 else {
+            throw StemError("seed \(seed): break takeover replayed \(edge - Int(rendered) + 441) frames")
+          }
+          breakEdge = nil
+        }
         if rendered != UInt64.max {
           guard rendered >= lastRendered else {
             throw StemError("seed \(seed) t=\(t): playback went back from \(lastRendered) to \(rendered)")
@@ -347,8 +360,9 @@ enum StreamMixerChecks {
         if underruns > lastUnderruns, t > quietUntil, playing { unexpectedUnderruns += Int(underruns - lastUnderruns) }
         lastUnderruns = underruns
       }
-      // Before the handoff output is off and nothing plays; the app hands off ~40 ms in.
-      guard !handedOff || ls_queued(core) <= UInt32(pipeline.lagFrames + 8820), ls_overflows(core) == 0 else {
+      // Held for a break: nothing may queue, or minutes of waiting would overflow.
+      guard handedOff || ls_queued(core) == 0 else { throw StemError("seed \(seed) t=\(t): queued audio while held") }
+      guard ls_queued(core) <= UInt32(pipeline.lagFrames + 8820), ls_overflows(core) == 0 else {
         throw StemError("seed \(seed) t=\(t): output queue \(ls_queued(core)) overflowed its bound")
       }
       if let failure { throw StemError("seed \(seed) t=\(t): pipeline failed: \(failure)") }

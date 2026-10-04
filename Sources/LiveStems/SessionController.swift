@@ -74,6 +74,7 @@ final class SessionController {
           // Hardware startup can block while the tap already captures. Those
           // samples predate our playback clock and must not become a backlog.
           pipeline.start(generation: token)
+          pipeline.holdForBreak()
           audio.discardCapturedAudio()
           self.busy = false
           self.began = stemClock()
@@ -139,12 +140,15 @@ final class SessionController {
         return
       }
       audio.setPlaybackRate(pipeline.easeRate)
-      if !outputOn, pipeline.end - pipeline.base >= pipeline.easeCushionFrames + 441 {
-        // Direct Spotify continues during startup. Hand off at the live edge with
-        // a short cushion, then let the ease grow the delay: nothing repeats.
+      // Direct Spotify plays until a natural break (pause, skip, seek), where the
+      // 0.3 s shift is silent. Stems wanted before then: take over at the live
+      // edge and grow the delay with a gentle ease instead. Nothing repeats.
+      let atBreak = pipeline.paused || pipeline.breakPending
+      let eased = !pipeline.resting && pipeline.end - pipeline.base >= pipeline.easeCushionFrames + 441
+      if !outputOn, atBreak || eased {
         // Mute first: if macOS refuses, nothing has moved yet.
         try audio.setOriginalSuppressed(true)
-        pipeline.beginEase()
+        if atBreak { pipeline.takeOverAtBreak() } else { pipeline.beginEase() }
         pipeline.step()
         audio.setOutputEnabled(true)
         outputOn = true
@@ -261,6 +265,7 @@ final class SessionController {
     }
   }
   private func mixStatus(_ pipeline: StemPipeline) -> String {
+    if !outputOn { return "Spotify direct · ready at the next pause, skip, or seek" }
     if pipeline.paused { return pipeline.statusText }
     if !stemsSelected { return "Original mix · model asleep" }
     if pipeline.resting {
@@ -373,7 +378,8 @@ final class SessionController {
     queue.async {
       self.quitVersion &+= 1
       self.quitCompletion = completion
-      guard self.enabled, let audio = self.audio, let pipeline = self.pipeline else {
+      // Before takeover Spotify is still direct: nothing to relay or drain.
+      guard self.enabled, self.outputOn, let audio = self.audio, let pipeline = self.pipeline else {
         self.finishQuit(); return
       }
       self.stemsSelected = false

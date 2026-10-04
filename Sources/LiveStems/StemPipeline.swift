@@ -26,8 +26,15 @@ final class StemPipeline {
   // Startup ease: hand off at the live edge with a short cushion, so nothing the
   // listener just heard repeats. Playback then runs slightly slow (pitch kept)
   // until the delay reaches lagFrames. Calibration knobs: cushion and depth.
-  let easeCushionFrames = 1323, easePrimeFrames = 662, easeMaxSlowdown: Float = 0.06
+  // 1.5 % keeps the tempo change below what listeners notice; it is only the
+  // fallback when stems are wanted before a natural break (see takeOverAtBreak).
+  let easeCushionFrames = 1323, easePrimeFrames = 662, easeMaxSlowdown: Float = 0.015
   private(set) var easing = false, easeRate: Float = 1
+  // Until takeover the listener hears Spotify directly and nothing is queued.
+  // A pause, skip, or seek is a break where the 0.3 s shift cannot be heard.
+  private(set) var outputLive = true, breakPending = false
+  /// The live session holds output for a break; fixtures keep committing at once.
+  func holdForBreak() { outputLive = false; breakPending = false }
   // Stems enter only after entryStreak results in a row arrive fully on time,
   // then fade in over entryFade. A coverage gap closes the gate again, so
   // partly late results (startup, a busy GPU) stay on the stem-free mix
@@ -131,6 +138,7 @@ final class StemPipeline {
     }
     let changedPause = paused != !value.isPlaying
     paused = !value.isPlaying
+    if cut || (changedPause && paused) { breakPending = true }
     if cut {
       // The notice and the poll can disagree for ~1 s around one transition
       // (duplicate notice, stale old-track read). A second cut naming either
@@ -356,8 +364,17 @@ final class StemPipeline {
     }
     return samples
   }
+  /// Take over at a pause or a cut: everything captured so far was already
+  /// heard directly, so playback continues from here after the steady lag.
+  func takeOverAtBreak() {
+    outputPosition = end
+    ls_flush_output(core)
+    outputLive = true; breakPending = false
+    onTrace?(TraceRecord(event: "takeover-break", generation: generation, sourceFrame: outputPosition))
+  }
   func beginEase() {
     // Frames before the cushion were already heard from Spotify directly.
+    outputLive = true; breakPending = false
     outputPosition = max(base, end - easeCushionFrames)
     ls_flush_output(core)
     ls_set_prime(core, UInt32(easePrimeFrames))
@@ -386,6 +403,7 @@ final class StemPipeline {
     // same deadline. Results cannot push the cursor backward or extend delay.
     if outputPosition < base { outputPosition = end; resetContext(at: end, flush: true) }
     if paused { endEase() }
+    guard outputLive else { outputPosition = max(outputPosition, end - lagFrames); return }
     let deadline = paused ? end : easing ? easeDeadline() : max(outputPosition, end - lagFrames)
     let count = deadline - outputPosition
     guard count > 0 else { return }

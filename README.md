@@ -85,18 +85,19 @@ Run the same command again to update after `git pull`. The previous version is k
 
 ## First launch
 
-1. Play something in Spotify.
-2. Click **Stems** in the menu bar to show the panel.
-3. Press any **M** or **S**, or move a slider. There is no enable button: the first change that needs
-   stems starts Live Stems.
-4. The first time, macOS asks two questions. Allow both:
+1. Open Live Stems. It starts listening right away, while Spotify keeps playing normally.
+2. The first time, macOS asks two questions. Allow both:
    - **Record system audio**, so Live Stems can hear Spotify.
    - **Control Spotify**, so it can read what is playing and notice skips and pauses.
+3. Click **Stems** in the menu bar to show the panel, then press any **M** or **S**, or move a slider.
 
-Live Stems takes a few seconds to start. Until then you hear the normal song; then your mix fades
-in. To make room for the model without a jump, the song plays a touch slower (pitch unchanged) for
-a few seconds as Live Stems takes over. While Live Stems is not running, Spotify plays straight to
-your speakers.
+Live Stems takes over from Spotify at the next pause, skip, or seek, so you never hear the switch.
+The status line says *Spotify direct · ready at the next pause, skip, or seek* until then. After
+that, any change to the mix fades in within about a second.
+
+If you change the mix before any break, Live Stems eases in instead: the song plays up to 1.5 %
+slower (pitch unchanged, too little to notice) for about 20 seconds, and the stems arrive after
+about 15 seconds. To skip the wait, pause and resume once.
 
 ## Using it
 
