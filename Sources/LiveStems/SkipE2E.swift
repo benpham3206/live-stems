@@ -49,7 +49,14 @@ enum SkipE2E {
       }
     }
     appendExpected(4410, 0.45, -0.4)
-    expected.append(contentsOf: [Float](repeating: 0, count: 882 * 2))
+    // A flush keeps the last rendered sample and fades it over 96 frames
+    // (~2 ms), then holds silence through priming. No full-level old audio.
+    let lastLeft = expected[expected.count - 2], lastRight = expected[expected.count - 1]
+    for k in 0..<96 {
+      let gain = Float(96 - 1 - k) / 96
+      expected.append(lastLeft * gain); expected.append(lastRight * gain)
+    }
+    expected.append(contentsOf: [Float](repeating: 0, count: (882 - 96) * 2))
     appendExpected(2205, -0.2, 0.35)
     let expectedFile = try AVAudioFile(forWriting: out.appendingPathComponent("skip-expected.wav"),
       settings: AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!.settings)
@@ -57,7 +64,13 @@ enum SkipE2E {
     let maxError = zip(rendered, expected).map { abs($0 - $1) }.max() ?? 0
     guard maxError < 1e-6 else { throw StemError("Skip waveform mismatch: \(maxError)") }
     let ghostPeak = (gap + held).map(abs).max() ?? 0
-    guard ghostPeak == 0 else { throw StemError("Skip replayed previous de-click sample: \(ghostPeak)") }
+    guard ghostPeak <= max(abs(lastLeft), abs(lastRight)) + 1e-6 else {
+      throw StemError("Skip replayed previous audio above its cut level: \(ghostPeak)")
+    }
+    let postFade = Array((gap + held).dropFirst(96 * 2))
+    guard postFade.allSatisfy({ $0 == 0 }) else {
+      throw StemError("Skip did not reach silence after its 96-frame fade")
+    }
     guard abs(fresh[fresh.count - 2] + 0.2) < 1e-6,
       abs(fresh.last! - 0.35) < 1e-6 else { throw StemError("Skip failed to resume the new source") }
 
@@ -97,7 +110,8 @@ enum SkipE2E {
     guard finished.wait(timeout: .now() + 2) == .success else { throw StemError("Capture race did not finish") }
     let raceRemaining = capture.withUnsafeMutableBufferPointer { ls_capture_read(core, $0.baseAddress, 4096) }
     guard raceRemaining == 0 else { throw StemError("In-flight old capture published after skip: \(raceRemaining) frames") }
-    let report: [String: Any] = ["status": "pass", "old_tail_peak": ghostPeak,
+    let report: [String: Any] = ["status": "pass", "cut_fade_frames": 96,
+      "cut_fade_peak": ghostPeak,
       "gap_and_prime_frames_checked": 882, "old_unread_capture_discarded": true,
       "new_source_resumed": true, "rendered_wav": "skip-rendered.wav",
       "expected_wav": "skip-expected.wav", "max_sample_error": maxError,

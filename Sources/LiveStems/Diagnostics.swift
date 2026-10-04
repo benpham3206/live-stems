@@ -34,6 +34,7 @@ struct SessionDiagnostics: Codable {
   var steadyFrames: Int
   var steadyFullStemFrames: Int
   var steadyFallbackFrames: Int
+  var steadyProvisionalFrames: Int
   func save() {
     do {
       try FileManager.default.createDirectory(

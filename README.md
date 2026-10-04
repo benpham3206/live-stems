@@ -30,7 +30,17 @@ Pause drains the short buffered tail, then stops. Resume keeps the source
 sequence and prepares new model context. A manual skip discards the old queue,
 the last rendered sample, unread capture, and converter carry. Notifications
 publish without waiting for the blocking metadata reader. Stale reads cannot
-restore a track after a skip.
+restore a track after a skip. A cut inside one second of the last cut that
+names either side of it is the same transition, not a new skip. The render
+fades the last sample over 2 ms at a flush instead of cutting hard. The
+notice precedes the acoustic change by about 50 ms and a silence gap follows
+the old-track tail, so the first gap start becomes the new model boundary
+without delaying playback. The post-skip rebuild rehearses the latest second
+at the steady hop (results discarded) so the first real jobs are not cold.
+Each result keeps its 50 ms right-context tail as a provisional estimate. A
+partly late result commits its uncommitted suffix, and missing frames use the
+tail instead of Original. The next result replaces provisional frames with a
+short crossfade. Jobs also start on result arrival, not only on the 10 ms tick.
 The cut also rejects samples with hardware timestamps before the notification
 boundary. A callback that starts after a cut can still contain an older block.
 Only the fresh suffix of a crossing block enters the converter.
@@ -93,7 +103,9 @@ bundle keeps the same signed identity across updates.
 
 Live timing logs are local under `~/Library/Application Support/Live Stems/`.
 `live-trace.jsonl` records mix changes, source frames, job windows and durations,
-coverage gaps, queue depth, and thermal state. `worker-timing.jsonl` records
+coverage gaps, queue depth, and thermal state. Late and partly late results,
+provisional cover, skip boundaries with the old-track tail length, duplicate
+cuts, warmup jobs, and first post-cut audio are recorded with frame counts. `worker-timing.jsonl` records
 model computation, output transfer, and MLX memory. Each log has a 2 MiB limit
 and one previous file. The trace records timing only; it does not record audio
 or song titles. File writes run outside the audio callback.
@@ -106,6 +118,7 @@ producer buffer is separate from this observed value.
 ```sh
 tail -f "$HOME/Library/Application Support/Live Stems/live-trace.jsonl"
 python3 outputs/live-stems-source/e2e/trace_report.py --output outputs/live-stems-acceptance/sustained-repair/live-trace-report.json
+python3 outputs/live-stems-source/e2e/trace_report.py --follow
 ```
 
 User action logs are also available in Console under subsystem

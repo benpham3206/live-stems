@@ -18,14 +18,19 @@ final class StemPipeline {
   private(set) var generation: UInt64 = 1, base = 0, end = 0, outputPosition = 0
   private(set) var weight: Float = 0, paused = false
   private(set) var discarded = 0, stemCommits = 0, fallbacks = 0, hardCuts = 0
-  private(set) var lateResults = 0, acceptedResults = 0
+  private(set) var lateResults = 0, acceptedResults = 0, partialResults = 0
   private(set) var steadyFrames = 0, steadyFullStemFrames = 0, steadyFallbackFrames = 0
+  private(set) var steadyProvisionalFrames = 0
   var timings = [Double]()
   private var history = [Float](), ready = [Chunk]()
+  private var provisional: Chunk?
   private var inflight: Job?, version: UInt64 = 0, contextStart = 0, scheduledEnd = 0
   private var snapshot: PlaybackSnapshot?, snapshotHost = 0.0, captureHost = 0.0
-  private var wasFallback = false
+  private var wasFallback = false, wasProvisional = false
   private var traceCovered = false
+  private(set) var tailScanning = false, cutHost = 0.0
+  private var tailScanEnd = 0, gapRun = 0, cutEnd = 0
+  private var cutFromTrack = "", cutToTrack = "", lastCutHost = -10.0
   var onFailure: ((String) -> Void)?, onCommit: ((Int, [Float]) -> Void)?
   var onTrace: ((TraceRecord) -> Void)?
   func estimatedTrackPosition(at frame: Int) -> Double? {
@@ -34,7 +39,10 @@ final class StemPipeline {
     return current - Double(end - frame) / 44100
   }
   init(core: OpaquePointer) { self.core = core }
-  var cacheBytes: Int { ready.reduce(0) { $0 + $1.samples.count * MemoryLayout<Float>.size } }
+  var cacheBytes: Int {
+    ready.reduce(0) { $0 + $1.samples.count * MemoryLayout<Float>.size }
+      + (provisional?.samples.count ?? 0) * MemoryLayout<Float>.size
+  }
   var statusText: String {
     if paused { return "Paused" }
     if end - contextStart < windowFrames { return "Original · preparing live stems" }
@@ -45,9 +53,12 @@ final class StemPipeline {
     base = 0; end = 0; outputPosition = 0; contextStart = 0; scheduledEnd = 0
     weight = 0; paused = false; history.removeAll(); ready.removeAll(); inflight = nil
     snapshot = nil; snapshotHost = 0; captureHost = 0; version += 1
-    discarded = 0; lateResults = 0; acceptedResults = 0; stemCommits = 0
-    fallbacks = 0; hardCuts = 0; wasFallback = false; timings.removeAll()
+    discarded = 0; lateResults = 0; acceptedResults = 0; partialResults = 0; stemCommits = 0
+    fallbacks = 0; hardCuts = 0; wasFallback = false; wasProvisional = false; timings.removeAll()
     steadyFrames = 0; steadyFullStemFrames = 0; steadyFallbackFrames = 0
+    steadyProvisionalFrames = 0
+    provisional = nil; tailScanning = false
+    cutFromTrack = ""; cutToTrack = ""; lastCutHost = -10.0
     ls_reset(core)
   }
   func ingest(_ samples: [Float], hostTime: Double = stemClock()) {
@@ -61,13 +72,41 @@ final class StemPipeline {
       let remove = end - base - 2 * 44100
       history.removeFirst(remove * 2); base += remove
     }
+    if tailScanning { scanTail(from: end - samples.count / 2) }
+  }
+  // After a manual cut the notice precedes the acoustic change by ~50 ms and
+  // a true silence gap follows the old-track tail. The first gap start is the
+  // new-track boundary. Playback already continues; only model context moves.
+  private func scanTail(from start: Int) {
+    for frame in max(start, base)..<end {
+      let at = (frame - base) * 2
+      if max(abs(history[at]), abs(history[at + 1])) < 0.008 {
+        gapRun += 1
+        if gapRun >= fade {
+          let boundary = frame + 1 - gapRun
+          contextStart = max(contextStart, boundary); scheduledEnd = max(scheduledEnd, boundary)
+          tailScanning = false
+          onTrace?(TraceRecord(event: "skip-boundary", generation: generation,
+            sourceFrame: boundary, sourceEnd: cutEnd))
+          return
+        }
+      } else { gapRun = 0 }
+      if frame + 1 >= tailScanEnd { cancelTailScan(); return }
+    }
+  }
+  func cancelTailScan() {
+    guard tailScanning else { return }
+    tailScanning = false
+    onTrace?(TraceRecord(event: "skip-boundary", generation: generation,
+      sourceFrame: cutEnd, sourceEnd: cutEnd))
   }
   @discardableResult
   func observe(_ value: PlaybackSnapshot, hostTime: Double = stemClock()) -> Bool {
     guard value.position.isFinite, value.duration.isFinite,
       value.position >= 0, value.position <= 86400, value.duration >= 0 else { lost(); return false }
-    var cut = false, natural = false
+    var cut = false, natural = false, fromTrack = ""
     if let old = snapshot {
+      fromTrack = old.trackID
       let expected = old.position + (old.isPlaying ? max(0, hostTime - snapshotHost) : 0)
       if value.trackID != old.trackID {
         cut = true
@@ -78,9 +117,21 @@ final class StemPipeline {
     let changedPause = paused != !value.isPlaying
     paused = !value.isPlaying
     if cut {
+      // The notice and the poll can disagree for ~1 s around one transition
+      // (duplicate notice, stale old-track read). A second cut naming either
+      // side of the last cut is that same transition, not a new skip.
+      if hostTime - lastCutHost < 1.0
+        && (value.trackID == cutToTrack || value.trackID == cutFromTrack)
+      {
+        snapshot = value; snapshotHost = hostTime
+        onTrace?(TraceRecord(event: "source-duplicate", generation: generation,
+          sourceFrame: end, estimatedTrackSeconds: value.position))
+        return false
+      }
+      cutFromTrack = fromTrack; cutToTrack = value.trackID; lastCutHost = hostTime
       let position = max(0, value.position + (value.isPlaying && captureHost > 0 ? captureHost - hostTime : 0))
       let boundary = natural ? max(contextStart, end - Int(position * 44100)) : end
-      resetContext(at: boundary, flush: !natural)
+      resetContext(at: boundary, flush: !natural, host: hostTime, scan: !natural)
     } else if changedPause {
       // Drain already captured audio on pause. A resume begins new model
       // context but retains the queued source timeline, including short pauses.
@@ -89,7 +140,8 @@ final class StemPipeline {
     snapshot = value; snapshotHost = hostTime
     if cut || changedPause {
       onTrace?(TraceRecord(event: cut ? "source-change" : "playback-state", generation: generation,
-        sourceFrame: end, estimatedTrackSeconds: value.position, hardCuts: hardCuts))
+        sourceFrame: end, queuedFrames: ls_queued(core), estimatedTrackSeconds: value.position,
+        hardCuts: hardCuts, noticeHostSeconds: hostTime))
     }
     return cut && !natural
   }
@@ -104,12 +156,27 @@ final class StemPipeline {
     contextStart = max(base, end - windowFrames)
     scheduledEnd = contextStart
     inflight = nil; ready.removeAll(); weight = 0; traceCovered = false
+    provisional = nil; wasProvisional = false; tailScanning = false
     onTrace?(TraceRecord(event: "processor-reset", generation: generation, sourceFrame: outputPosition))
   }
-  private func resetContext(at frame: Int, flush: Bool) {
+  private func resetContext(at frame: Int, flush: Bool, host: Double = stemClock(), scan: Bool = false) {
     version += 1; contextStart = frame; scheduledEnd = frame
     ready.removeAll { flush || $0.range.upperBound > frame }
-    if flush { weight = 0; outputPosition = end; hardCuts += 1; ls_flush_output(core) }
+    if flush {
+      weight = 0; outputPosition = end; hardCuts += 1; ls_flush_output(core)
+      provisional = nil; wasProvisional = false
+      tailScanning = scan; cutEnd = end; tailScanEnd = end + 13230; gapRun = 0; cutHost = host
+    }
+  }
+  func warmupWindow() -> AudioWindow? {
+    // Post-skip context rebuild idles the worker for ~1 s while the GPU goes
+    // cold. Rehearse the latest full second at the steady hop; the caller
+    // discards these results. Never competes with a real window.
+    guard !paused, end - base >= windowFrames, end - contextStart < windowFrames else { return nil }
+    let window = (end - windowFrames)..<end
+    let offset = (window.lowerBound - base) * 2
+    return AudioWindow(range: FrameRange(generation: generation, start: UInt64(window.lowerBound),
+      count: UInt32(windowFrames)), samples: Array(history[offset..<offset + windowFrames * 2]))
   }
   func job() -> AudioWindow? {
     guard inflight == nil, !paused else { return nil }
@@ -143,14 +210,36 @@ final class StemPipeline {
     guard job.core.upperBound > outputPosition else {
       discarded += 1; lateResults += 1
       onTrace?(TraceRecord(event: "late-result", generation: generation, sourceFrame: outputPosition,
-        windowStart: result.range.start, lateResults: lateResults))
+        windowStart: result.range.start, lateResults: lateResults, lateFrames: job.core.count))
       return
     }
-    let lo = (job.core.lowerBound - job.window.lowerBound) * 8
+    // A partly late result still owns its uncommitted suffix. Frames before
+    // the commit frontier already played; the rest must not fall back.
+    let coreLo = max(job.core.lowerBound, outputPosition)
+    if coreLo > job.core.lowerBound {
+      partialResults += 1
+      onTrace?(TraceRecord(event: "partial-late", generation: generation, sourceFrame: outputPosition,
+        sourceEnd: job.core.upperBound, windowStart: result.range.start, lateFrames: coreLo - job.core.lowerBound))
+    }
+    var coreSamples = Array(result.samples[(coreLo - job.window.lowerBound) * 8..<((job.core.upperBound - job.window.lowerBound) * 8)])
+    // The next estimate overlaps the previous right-context tail. Blend the
+    // uncommitted overlap instead of stepping between two estimates.
+    if let tail = provisional, tail.range.upperBound > coreLo, tail.range.lowerBound < job.core.upperBound {
+      let overlap = max(tail.range.lowerBound, coreLo)..<min(tail.range.upperBound, job.core.upperBound)
+      for frame in overlap.lowerBound..<min(overlap.upperBound, overlap.lowerBound + fade) {
+        let amount = Float(frame - overlap.lowerBound + 1) / Float(fade + 1)
+        for channel in 0..<8 {
+          coreSamples[(frame - coreLo) * 8 + channel] =
+            tail.samples[(frame - tail.range.lowerBound) * 8 + channel] * (1 - amount)
+            + coreSamples[(frame - coreLo) * 8 + channel] * amount
+        }
+      }
+    }
     // Join two estimates of the same source frames. Touch only frames that
     // have not entered the output queue; never replace already played audio.
     if outputPosition < job.core.lowerBound,
-      let last = ready.indices.last, ready[last].range.upperBound == job.core.lowerBound {
+      let last = ready.indices.last, ready[last].range.upperBound == job.core.lowerBound
+    {
       let overlapStart = job.core.lowerBound - fade
       for frame in max(outputPosition, overlapStart)..<job.core.lowerBound {
         let amount = Float(frame - overlapStart + 1) / Float(fade + 1)
@@ -162,10 +251,18 @@ final class StemPipeline {
         }
       }
     }
-    ready.append(Chunk(range: job.core, samples: Array(result.samples[lo..<lo + job.core.count * 8])))
+    ready.append(Chunk(range: coreLo..<job.core.upperBound, samples: coreSamples))
+    // Keep the right-context tail as a provisional estimate. It commits only
+    // if the next result arrives late; that result then replaces it.
+    let tailLo = max(job.core.upperBound, outputPosition)
+    if tailLo < job.window.upperBound {
+      let at = (tailLo - job.window.lowerBound) * 8
+      provisional = Chunk(range: tailLo..<job.window.upperBound,
+        samples: Array(result.samples[at..<at + (job.window.upperBound - tailLo) * 8]))
+    } else { provisional = nil }
     acceptedResults += 1
     onTrace?(TraceRecord(event: "accepted-result", generation: generation,
-      sourceFrame: job.core.lowerBound, sourceEnd: job.core.upperBound,
+      sourceFrame: coreLo, sourceEnd: job.core.upperBound,
       windowStart: result.range.start, deadlineSlackSeconds: Double(job.core.lowerBound - outputPosition) / 44100))
   }
   private func block(start: Int, count: Int) -> [Float] {
@@ -173,14 +270,34 @@ final class StemPipeline {
     for i in 0..<count {
       let frame = start + i, out = i * 11, source = (frame - base) * 2
       samples[out + 8] = history[source]; samples[out + 9] = history[source + 1]
+      let usedProvisional: Bool
+      // Targets never pull weight down while estimates cover the frame. A
+      // ready/provisional handoff then continues at full stems, never dips.
       if let index = ready.firstIndex(where: { $0.range.contains(frame) }) {
         var lo = index
         while lo > 0 && ready[lo - 1].range.upperBound == ready[lo].range.lowerBound { lo -= 1 }
-        let target = min(1, Float(frame - ready[lo].range.lowerBound + 1) / Float(fade))
+        let target = min(1, max(Float(frame - ready[lo].range.lowerBound + 1) / Float(fade), weight))
         weight += max(-1 / Float(fade), min(1 / Float(fade), target - weight))
         let offset = (frame - ready[index].range.lowerBound) * 8
         for channel in 0..<8 { samples[out + channel] = ready[index].samples[offset + channel] }
-      } else { weight = 0 }
+        usedProvisional = false
+      } else if let tail = provisional, tail.range.contains(frame) {
+        // A late result falls back to the previous tail estimate, never to
+        // the full mix. The next result replaces these frames on arrival.
+        let target = min(1, max(Float(frame - tail.range.lowerBound + 1) / Float(fade), weight))
+        weight += max(-1 / Float(fade), min(1 / Float(fade), target - weight))
+        let offset = (frame - tail.range.lowerBound) * 8
+        for channel in 0..<8 { samples[out + channel] = tail.samples[offset + channel] }
+        usedProvisional = true
+      } else {
+        weight = 0
+        usedProvisional = false
+      }
+      if usedProvisional != wasProvisional {
+        wasProvisional = usedProvisional
+        onTrace?(TraceRecord(event: usedProvisional ? "provisional-cover" : "provisional-end",
+          generation: generation, sourceFrame: frame))
+      }
       samples[out + 10] = weight
       if traceCovered != (weight >= 0.999) {
         traceCovered = weight >= 0.999
@@ -191,6 +308,7 @@ final class StemPipeline {
         steadyFrames += 1
         if weight >= 0.999 { steadyFullStemFrames += 1 }
         if weight < 0.001 { steadyFallbackFrames += 1 }
+        if wasProvisional { steadyProvisionalFrames += 1 }
       }
     }
     return samples
@@ -213,6 +331,7 @@ final class StemPipeline {
     else if !wasFallback { fallbacks += 1; wasFallback = true }
     onCommit?(start, samples)
     ready.removeAll { $0.range.upperBound < outputPosition - fade }
+    if let tail = provisional, tail.range.upperBound <= outputPosition { provisional = nil }
     if cacheBytes > memoryLimit { onFailure?("Stem buffer exceeded its bound") }
   }
 }

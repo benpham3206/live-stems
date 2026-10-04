@@ -10,7 +10,8 @@ final class SessionController {
   private var spotify: SpotifyState?
   private let stateSource: SpotifyState
   private var token: UInt64 = 0, job: UInt64 = 0, busy = false, enabled = false,
-    outputOn = false, stemsSelected = true
+    outputOn = false, stemsSelected = true, warmupsLeft = 0
+  private var awaitingFirstAudio = false, cutHost = 0.0
   private var controls = StemControls(), began = 0.0, capturePeak: Float = 0,
     lastCaptureEndHost = 0.0
   private var lastDeviceCheck = 0.0, lastDiagnostics = 0.0, lastStatus = ""
@@ -84,6 +85,10 @@ final class SessionController {
               guard self.enabled, self.token == token else { return }
               if self.pipeline?.observe(value, hostTime: host) == true {
                 self.audio?.discardCapturedAudio(at: host)
+                self.warmupsLeft = 3
+                self.cutHost = host
+                self.awaitingFirstAudio = true
+                self.capturePeak = 0
               }
             }
           }, onUnavailable: { message in
@@ -117,7 +122,13 @@ final class SessionController {
       if !samples.isEmpty {
         lastCaptureEndHost = audio.lastDrainEndHostSeconds
         pipeline.ingest(samples, hostTime: lastCaptureEndHost)
+        if awaitingFirstAudio, capturePeak > 0.005 {
+          awaitingFirstAudio = false
+          trace.record(TraceRecord(event: "skip-first-audio", generation: pipeline.generation,
+            sourceFrame: pipeline.end, elapsedSeconds: stemClock() - cutHost))
+        }
       }
+      if pipeline.tailScanning, stemClock() - pipeline.cutHost > 0.5 { pipeline.cancelTailScan() }
       if pipeline.paused { began = stemClock() }
       if !pipeline.paused, stemClock() - began > 10, pipeline.end == 0 {
         throw StemError("Spotify capture silent · live Spotify restored")
@@ -137,31 +148,8 @@ final class SessionController {
           sourceFrame: pipeline.outputPosition, queuedFrames: ls_queued(audio.core)))
         DispatchQueue.main.async { self.onReady?() }
       }
-      if !busy, let worker = worker, let window = pipeline.job() {
-        busy = true
-        job += 1
-        let began = stemClock()
-        let jobID = job
-        trace.record(TraceRecord(event: "job-start", generation: pipeline.generation, sourceFrame: pipeline.outputPosition,
-          windowStart: window.range.start, windowFrames: window.range.count, jobID: jobID, workerPID: worker.pid))
-        worker.separate(window, jobID: job) { result in
-          self.queue.async {
-            guard self.worker === worker else { return }
-            self.busy = false
-            guard self.enabled, let current = self.pipeline else { return }
-            do {
-              let output = try result.get()
-              current.timings.append(stemClock() - began)
-              self.trace.record(TraceRecord(event: "job-finish", generation: output.range.generation,
-                sourceFrame: current.outputPosition, windowStart: output.range.start,
-                windowFrames: output.range.count, jobID: jobID, workerPID: worker.pid,
-                elapsedSeconds: stemClock() - began))
-              if current.timings.count > 2048 { current.timings.removeFirst() }
-              current.accept(output)
-            } catch { self.end(error.localizedDescription) }
-          }
-        }
-      }
+      startJob()
+      startWarmup()
       guard enabled else { return }
       if stemClock() - lastTrace >= 0.25 {
         lastTrace = stemClock()
@@ -193,6 +181,55 @@ final class SessionController {
         capturePeak = 0
       }
     } catch { end(error.localizedDescription) }
+  }
+  private func startJob() {
+    guard enabled, !busy, let worker = worker, let pipeline = pipeline,
+      let window = pipeline.job() else { return }
+    busy = true
+    start(window: window, worker: worker, warmup: false)
+  }
+  private func startWarmup() {
+    guard enabled, !busy, warmupsLeft > 0, let worker = worker, let pipeline = pipeline,
+      let window = pipeline.warmupWindow() else { return }
+    busy = true
+    warmupsLeft -= 1
+    start(window: window, worker: worker, warmup: true)
+  }
+  // Results schedule the next job on arrival instead of waiting for the 10 ms
+  // tick. The slice is cheap; the worker round trip dominates either way.
+  private func start(window: AudioWindow, worker: WorkerClient, warmup: Bool) {
+    guard let pipeline = pipeline else { busy = false; return }
+    job += 1
+    let began = stemClock()
+    let jobID = job
+    trace.record(TraceRecord(event: warmup ? "warmup-start" : "job-start", generation: pipeline.generation,
+      sourceFrame: pipeline.outputPosition, windowStart: window.range.start,
+      windowFrames: window.range.count, jobID: jobID, workerPID: worker.pid))
+    worker.separate(window, jobID: job) { result in
+      self.queue.async {
+        guard self.worker === worker else { return }
+        self.busy = false
+        guard self.enabled, let current = self.pipeline else { return }
+        do {
+          let output = try result.get()
+          if warmup {
+            self.trace.record(TraceRecord(event: "warmup-finish", generation: output.range.generation,
+              sourceFrame: current.outputPosition, windowStart: output.range.start,
+              windowFrames: output.range.count, jobID: jobID, workerPID: worker.pid,
+              elapsedSeconds: stemClock() - began))
+          } else {
+            current.timings.append(stemClock() - began)
+            self.trace.record(TraceRecord(event: "job-finish", generation: output.range.generation,
+              sourceFrame: current.outputPosition, windowStart: output.range.start,
+              windowFrames: output.range.count, jobID: jobID, workerPID: worker.pid,
+              elapsedSeconds: stemClock() - began))
+            if current.timings.count > 2048 { current.timings.removeFirst() }
+            current.accept(output)
+          }
+          self.startJob()
+        } catch { self.end(error.localizedDescription) }
+      }
+    }
   }
   private func applyControls() {
     if let core = audio?.core {
@@ -262,7 +299,7 @@ final class SessionController {
       stemsSelected: stemsSelected, windowFrames: p.windowFrames, hopFrames: p.hop,
       lateResults: p.lateResults, acceptedResults: p.acceptedResults,
       steadyFrames: p.steadyFrames, steadyFullStemFrames: p.steadyFullStemFrames,
-      steadyFallbackFrames: p.steadyFallbackFrames
+      steadyFallbackFrames: p.steadyFallbackFrames, steadyProvisionalFrames: p.steadyProvisionalFrames
     ).save()
   }
   private func end(_ message: String) {
