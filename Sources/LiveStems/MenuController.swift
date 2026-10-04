@@ -14,7 +14,7 @@ final class MenuController: NSObject, NSWindowDelegate {
   private let windowLog = Logger(subsystem: "com.benpham.livestems", category: "Windowing")
   private let statusLabel = NSTextField(labelWithString: "Live Spotify · original"),
     outputLabel = NSTextField(labelWithString: ""),
-    startButton = NSButton(title: "Enable live stems", target: nil, action: nil)
+    startButton = NSButton(title: "Reset", target: nil, action: nil)
   private var active = false, panelRequested = true, controls = StemControls()
   private var muteButtons: [NSButton] = [], soloButtons: [NSButton] = [], sliders: [NSSlider] = []
   private var waveforms: [StemWaveform] = []
@@ -25,9 +25,13 @@ final class MenuController: NSObject, NSWindowDelegate {
   override convenience init() {
     self.init(activateOnStatusClick: true)
   }
-  init(activateOnStatusClick: Bool, terminate: @escaping () -> Void = { NSApp.terminate(nil) }) {
+  private let startOverride: (() -> Void)?
+  /// `start` replaces the session start; the menu E2E counts starts without capturing audio.
+  init(activateOnStatusClick: Bool, terminate: @escaping () -> Void = { NSApp.terminate(nil) },
+    start: (() -> Void)? = nil) {
     self.activatesOnStatusClick = activateOnStatusClick
     self.terminate = terminate
+    self.startOverride = start
     super.init()
     configureStatusItem()
     window.title = "Live Stems"
@@ -44,7 +48,7 @@ final class MenuController: NSObject, NSWindowDelegate {
     content.addSubview(outputLabel)
     startButton.frame = NSRect(x: 12, y: 333, width: 306, height: 30)
     startButton.target = self
-    startButton.action = #selector(toggle)
+    startButton.action = #selector(resetButton)
     startButton.bezelStyle = .rounded
     content.addSubview(startButton)
     let stemColors: [NSColor] = [.systemPink, .systemOrange, .systemPurple, .systemGreen]
@@ -133,7 +137,6 @@ final class MenuController: NSObject, NSWindowDelegate {
     statusLabel.stringValue = text
     statusLabel.toolTip = text
     outputLabel.stringValue = "Output: " + output
-    startButton.title = enabled ? "Reset" : "Enable live stems"
     item.button?.title = "Stems"
   }
   private func positionWindow() {
@@ -165,9 +168,8 @@ final class MenuController: NSObject, NSWindowDelegate {
       "Windowing close event=windowWillClose visible=\(self.window.isVisible, privacy: .public) appActive=\(NSApp.isActive, privacy: .public)"
     )
   }
-  @objc private func toggle() { if active { resetMix() } else { session.start() } }
   /// Neutral controls and a live stem splitter again, whatever state it was in.
-  private func resetMix() {
+  @objc private func resetButton() {
     resetControls()
     session.restoreStems()
   }
@@ -180,7 +182,7 @@ final class MenuController: NSObject, NSWindowDelegate {
   }
   @objc private func slide(_ sender: NSSlider) {
     controls.gains[sender.tag] = sender.floatValue
-    session.setControls(controls)
+    applyControls()
   }
   @objc private func check(_ sender: NSButton) {
     let mask: UInt32 = 1 << UInt32(sender.tag % 4)
@@ -206,6 +208,8 @@ final class MenuController: NSObject, NSWindowDelegate {
     clearSoloButton.state = controls.solo != 0 ? .on : .off
     for (waveform, gain) in zip(waveforms, controls.effectiveGains) { waveform.dimmed = gain == 0 }
     session.setControls(controls)
+    // No enable step: the first mix that needs stems starts Live Stems.
+    if !active, Set(controls.effectiveGains).count > 1 { (startOverride ?? session.start)() }
   }
   private func configureStatusItem() {
     item.button?.title = "Stems"

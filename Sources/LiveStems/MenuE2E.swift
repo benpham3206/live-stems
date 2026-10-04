@@ -64,7 +64,9 @@ enum MenuE2E {
     // Synthetic target/action clicks must not steal the user's foreground app.
     // The normal product initializer keeps activation enabled for real clicks.
     var quitCompletions = 0
-    let controller = MenuController(activateOnStatusClick: false, terminate: { quitCompletions += 1 })
+    var starts = 0
+    let controller = MenuController(
+      activateOnStatusClick: false, terminate: { quitCompletions += 1 }, start: { starts += 1 })
     guard let status = controller.e2eStatusButton,
       let window = controller.e2eWindow
     else { throw StemError("Menu E2E could not access the AppKit controls") }
@@ -127,6 +129,8 @@ enum MenuE2E {
       "app_active_after_click": app.isActive,
     ])
 
+    controller.e2eApplyStatusForTest(enabled: false)  // as after launch: nothing running yet
+    try require(starts == 0, "Live Stems started before any control needed stems")
     for label in ["Vocals Mute", "Vocals Solo"] {
       let button = try control(named: label, in: window)
       button.performClick(nil)
@@ -141,6 +145,8 @@ enum MenuE2E {
       ])
     }
 
+    try require(starts > 0, "The first Mute did not start Live Stems")
+    checks.append(["name": "first_control_starts", "starts": starts])
     let bassSolo = try control(named: "Bass Solo", in: window)
     bassSolo.performClick(nil)
     pump()
