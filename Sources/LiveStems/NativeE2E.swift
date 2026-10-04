@@ -135,6 +135,11 @@ enum NativeE2E {
       try recovery(out)
     case "snapshot":
       try MenuE2E.snapshot(out)
+    case "ease":
+      let report = try StreamMixerChecks.ease()
+      try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+        .write(to: out.appendingPathComponent("ease.json"))
+      print("PASS ease · \(report)")
     case "rest":
       let report = try StreamMixerChecks.resting()
       try JSONSerialization.data(withJSONObject: report).write(to: out.appendingPathComponent("rest.json"))

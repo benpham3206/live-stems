@@ -33,6 +33,8 @@ final class AudioSession {
   private var tapID: AudioObjectID = 0, aggregate: AudioObjectID = 0, ioProc: AudioDeviceIOProcID?
   private let description = CATapDescription(), engine = AVAudioEngine()
   private var node: AVAudioSourceNode?, converter: AVAudioConverter?
+  // Bit-exact at rate 1; the startup ease runs it slightly slow, pitch kept.
+  private let timePitch = AVAudioUnitTimePitch()
   private var inputFormat: AVAudioFormat!,
     modelFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
   private var started = false
@@ -89,7 +91,9 @@ final class AudioSession {
         return noErr
       }
       engine.attach(node!)
-      engine.connect(node!, to: engine.mainMixerNode, format: modelFormat)
+      engine.attach(timePitch)
+      engine.connect(node!, to: timePitch, format: modelFormat)
+      engine.connect(timePitch, to: engine.mainMixerNode, format: modelFormat)
       // Audio already handed to the device survives a flush. A small
       // per-process IO buffer bounds that old-audio leak after a skip.
       if let unit = engine.outputNode.audioUnit {
@@ -129,6 +133,9 @@ final class AudioSession {
           tapID, &a, 0, nil, UInt32(MemoryLayout<CATapDescription>.size), $0),
         "Cannot switch Spotify playback")
     }
+  }
+  func setPlaybackRate(_ value: Float) {
+    if timePitch.rate != value { timePitch.rate = value }
   }
   func setOutputEnabled(_ value: Bool) {
     if let c = core { ls_enable(c, value ? 1 : 0) }

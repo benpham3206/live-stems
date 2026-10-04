@@ -155,6 +155,62 @@ enum StreamMixerChecks {
     }
     return ["checked": true, "pass": true, "resting_mix_max_error": errors]
   }
+  // Worker-free proof of the startup ease: playback starts at the live edge, the
+  // render (run at the pipeline's requested rate, as the time-pitch unit would)
+  // never underruns, repeats, or skips, and the delay grows to the steady value.
+  static func ease() throws -> [String: Any] {
+    guard let core = ls_create(44100, 44100) else { throw StemError("Cannot allocate ease check core") }
+    defer { ls_destroy(core) }
+    let pipeline = StemPipeline(core: core)
+    pipeline.start(generation: 1)
+    pipeline.observe(PlaybackSnapshot(trackID: "ease", title: "Ease", duration: 600,
+      position: 0, isPlaying: true), hostTime: stemClock())
+    // Each frame carries its own index: left = index % 1000, right = index / 1000 (scaled).
+    func tick() {
+      let from = pipeline.end
+      pipeline.ingest((0..<441).flatMap { f -> [Float] in
+        let index = from + f
+        return [Float(index % 1000) / 1000, Float(index / 1000) / 1000]
+      }, hostTime: stemClock())
+      pipeline.step()
+    }
+    for _ in 0..<30 { tick() }  // 300 ms of capture while Spotify still plays directly
+    let liveEdge = pipeline.end
+    pipeline.beginEase()
+    pipeline.step()
+    ls_enable(core, 1)
+    var rendered = [Int](), owed = 0.0, minRate: Float = 1, maxStep: Float = 0, lastRate = pipeline.easeRate
+    var endedAfter: Double?
+    for t in 0..<1500 {  // 15 s
+      tick()
+      minRate = min(minRate, pipeline.easeRate)
+      maxStep = max(maxStep, abs(pipeline.easeRate - lastRate)); lastRate = pipeline.easeRate
+      if endedAfter == nil, !pipeline.easing { endedAfter = Double(t) / 100 }
+      owed += 441 * Double(pipeline.easeRate)
+      let take = Int(owed); owed -= Double(take)
+      let out = StreamE2E.readMix(core, frames: take).samples
+      for f in 0..<take { rendered.append(Int((out[f * 2 + 1] * 1000).rounded()) * 1000 + Int((out[f * 2] * 1000).rounded())) }
+    }
+    let settled = Array(rendered.dropFirst(200))  // the 2.5 ms start envelope scales the first frames
+    let first = settled[0] - 200
+    let replay = liveEdge - first
+    let continuous = zip(settled, settled.dropFirst()).allSatisfy { $1 == $0 + 1 }
+    let finalLatency = pipeline.end - (rendered.last ?? 0)
+    let underruns = ls_underruns(core)
+    guard replay <= pipeline.easeCushionFrames + 441 else { throw StemError("Ease replayed \(replay) frames at handoff") }
+    guard continuous else { throw StemError("Ease render repeated or skipped a frame") }
+    guard underruns == 0 else { throw StemError("Ease render underran \(underruns) times") }
+    guard let ended = endedAfter, ended < 10 else { throw StemError("Ease did not finish within 10 s") }
+    guard abs(finalLatency - (pipeline.lagFrames + 2205)) <= 882 else {
+      throw StemError("Ease ended at latency \(finalLatency) frames")
+    }
+    guard minRate >= 1 - pipeline.easeMaxSlowdown - 0.0001, maxStep <= 0.0021 else {
+      throw StemError("Ease rate left its bounds: min \(minRate), step \(maxStep)")
+    }
+    return ["checked": true, "pass": true, "handoff_replay_ms": Double(replay) / 44.1,
+      "ease_seconds": ended, "final_latency_ms": Double(finalLatency) / 44.1,
+      "min_rate": minRate, "max_rate_step": maxStep, "underruns": underruns]
+  }
   static func sine(at frame: Int) -> Float {
     Float(sin(Double(frame) * 2 * .pi * 440 / 44100)) * 0.5
   }

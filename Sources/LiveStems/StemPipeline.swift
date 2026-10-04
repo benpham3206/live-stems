@@ -23,6 +23,11 @@ final class StemPipeline {
   private(set) var steadyProvisionalFrames = 0
   // The model rests while the mix equals Original. Resting frames are not steady stem frames.
   private(set) var resting = false
+  // Startup ease: hand off at the live edge with a short cushion, so nothing the
+  // listener just heard repeats. Playback then runs slightly slow (pitch kept)
+  // until the delay reaches lagFrames. Calibration knobs: cushion and depth.
+  let easeCushionFrames = 1323, easePrimeFrames = 662, easeMaxSlowdown: Float = 0.06
+  private(set) var easing = false, easeRate: Float = 1
   var timings = [Double]()
   private var history = [Float](), ready = [Chunk]()
   private var provisional: Chunk?
@@ -174,6 +179,7 @@ final class StemPipeline {
     version += 1; contextStart = frame; scheduledEnd = frame
     ready.removeAll { flush || $0.range.upperBound > frame }
     if flush {
+      endEase()
       weight = 0; outputPosition = end; hardCuts += 1; ls_flush_output(core)
       provisional = nil; wasProvisional = false
       tailScanning = scan; cutEnd = end; tailScanEnd = end + 13230; gapRun = 0; cutHost = host
@@ -324,11 +330,37 @@ final class StemPipeline {
     }
     return samples
   }
+  func beginEase() {
+    // Frames before the cushion were already heard from Spotify directly.
+    outputPosition = max(base, end - easeCushionFrames)
+    ls_flush_output(core)
+    ls_set_prime(core, UInt32(easePrimeFrames))
+    easing = true; easeRate = 1
+    onTrace?(TraceRecord(event: "ease-start", generation: generation, sourceFrame: outputPosition))
+  }
+  private func endEase() {
+    guard easing else { return }
+    easing = false; easeRate = 1
+    ls_set_prime(core, 0)
+    onTrace?(TraceRecord(event: "ease-end", generation: generation, sourceFrame: outputPosition))
+  }
+  /// Commit only to keep the cushion full; the slow render grows the delay. The
+  /// slowdown shrinks as capture-to-render nears the steady lag plus its 50 ms
+  /// queue, at most 0.2% per step, so the end of the ease matches steady state.
+  private func easeDeadline() -> Int {
+    let queued = Int(ls_queued(core))
+    let remaining = lagFrames + 2205 - (end - (outputPosition - queued))
+    if remaining <= 220, easeRate >= 0.998 { endEase(); return max(outputPosition, end - lagFrames) }
+    let target = 1 - max(0, min(easeMaxSlowdown, Float(remaining) / 22050))
+    easeRate += max(-0.002, min(0.002, target - easeRate))
+    return min(end, outputPosition + max(0, easeCushionFrames - queued))
+  }
   func step() {
     // The delay is established once. Missing stems use Original at this exact
     // same deadline. Results cannot push the cursor backward or extend delay.
     if outputPosition < base { outputPosition = end; resetContext(at: end, flush: true) }
-    let deadline = paused ? end : max(outputPosition, end - lagFrames)
+    if paused { endEase() }
+    let deadline = paused ? end : easing ? easeDeadline() : max(outputPosition, end - lagFrames)
     let count = deadline - outputPosition
     guard count > 0 else { return }
     let start = outputPosition, samples = block(start: start, count: count)

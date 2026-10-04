@@ -59,11 +59,16 @@ A small Original relay keeps the playback clock until Spotify pauses. It then
 drains the queued tail and exits. Open the app again to restore its controls
 and cancel the pending exit. The relay does not run the model.
 
-At cold startup, direct Spotify remains audible while the worker warms and the
-Original queue fills. Capture takes over only with at least 50 ms queued.
-This removes the empty-queue mute. Direct Spotify and captured playback still
-have an initial timing offset of about 340 ms. Within captured playback,
-Original and stems use the same source frames.
+At cold startup, direct Spotify remains audible while the worker warms. Capture
+takes over at the live edge with a 30 ms cushion and a 15 ms prime, so at most
+30 ms that the listener already heard plays again. Playback then runs slow
+through an AVAudioUnitTimePitch (pitch kept, at most 6 %, rate change at most
+0.2 % per 10 ms step) until capture-to-render reaches the steady lag plus its
+50 ms queue. This takes about 6 s. The unit is bit-exact at rate 1, so steady
+playback is unchanged. A skip, seek, or pause during the ease ends it at once.
+Stems need about 215 ms of delay, so the first stem mix after a cold start
+arrives after about 3–4 s. The `ease` stage checks this without a worker. Within
+captured playback, Original and stems use the same source frames.
 
 Capture history is bounded to three seconds and compacts to two seconds. Ready
 stem data has an 8 MiB bound. No song library or long track cache is retained.

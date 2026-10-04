@@ -4,6 +4,8 @@
 Mute the vocals for karaoke, solo the bass to learn a line, or turn the drums down, on any song,
 while it plays. No downloads, no prepared tracks: the separation happens as the music plays.
 
+![The Live Stems panel](docs/panel.png)
+
 Live Stems sits in your menu bar. Its panel has one row per stem, like a Logic Pro track header:
 
 - a **volume slider**,
@@ -91,8 +93,10 @@ Run the same command again to update after `git pull`. The previous version is k
    - **Record system audio**, so Live Stems can hear Spotify.
    - **Control Spotify**, so it can read what is playing and notice skips and pauses.
 
-Live Stems takes a few seconds to load the model. Until then you hear the normal song; then your mix
-fades in. While Live Stems is not running, Spotify plays straight to your speakers.
+Live Stems takes a few seconds to start. Until then you hear the normal song; then your mix fades
+in. To make room for the model without a jump, the song plays a touch slower (pitch unchanged) for
+a few seconds as Live Stems takes over. While Live Stems is not running, Spotify plays straight to
+your speakers.
 
 ## Using it
 

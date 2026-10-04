@@ -24,6 +24,7 @@ struct LSCore {
     int priming, fade_out;
     float meter_hold[4];
     atomic_uint meter[4];
+    atomic_uint prime_frames;
 };
 static void init_ring(Ring *r, uint32_t n, uint32_t ch) { r->capacity=n; r->channels=ch; r->data=calloc((size_t)n*ch,sizeof(float)); }
 LSCore *ls_create(double cr, double rr) {
@@ -35,6 +36,7 @@ LSCore *ls_create(double cr, double rr) {
     float gains[4]={1,1,1,1}; ls_controls(c,gains,0,0); for(int s=0;s<4;s++)c->smooth[s]=1; atomic_store(&c->stems,1); c->stem_blend=1; c->priming=1; return c;
 }
 void ls_destroy(LSCore *c) { if(c){free(c->capture.data);free(c->output.data);free(c->capture_times);free(c->output_times);free(c->output_frames);free(c);} }
+void ls_set_prime(LSCore *c,uint32_t frames){atomic_store(&c->prime_frames,frames);}
 void ls_enable(LSCore *c,int enabled){atomic_store(&c->enabled,enabled);}
 void ls_stems(LSCore *c,int enabled){atomic_store(&c->stems,enabled!=0);}
 void ls_reset(LSCore *c){atomic_store(&c->enabled,0);atomic_fetch_add(&c->epoch,1);ls_discard_capture(c);atomic_store(&c->output.read,atomic_load(&c->output.write));atomic_store(&c->played,0);}
@@ -45,7 +47,8 @@ void ls_flush_output(LSCore *c){atomic_store(&c->flush,atomic_load(&c->output.wr
 uint64_t ls_played(LSCore *c){return atomic_load(&c->played);}
 uint64_t ls_underruns(LSCore *c){return atomic_load(&c->underruns);}
 uint64_t ls_overflows(LSCore *c){return atomic_load(&c->overflows);}
-uint32_t ls_queued(LSCore *c){return (uint32_t)(atomic_load(&c->output.write)-atomic_load(&c->output.read));}
+// Frames before a pending flush point will never play, so they are not queued.
+uint32_t ls_queued(LSCore *c){uint64_t r=atomic_load(&c->output.read),f=atomic_load(&c->flush);if(f>r)r=f;return (uint32_t)(atomic_load(&c->output.write)-r);}
 uint32_t ls_capture_read_timed(LSCore *c,float *out,uint32_t n,double *end_host_seconds){Ring *r=&c->capture;uint64_t pos=atomic_load(&r->read),end=atomic_load(&r->write);if(n>end-pos)n=(uint32_t)(end-pos);for(uint32_t i=0;i<n;i++)memcpy(out+i*2,r->data+((pos+i)%r->capacity)*2,8);if(n && end_host_seconds){uint64_t stamp=c->capture_times[(pos+n-1)%r->capacity];*end_host_seconds=stamp?(double)stamp/1e9+1.0/c->capture_rate:0;}atomic_store(&r->read,pos+n);return n;}
 uint32_t ls_capture_read(LSCore *c,float *out,uint32_t n){return ls_capture_read_timed(c,out,n,NULL);}
 // Advance past one empty slot to invalidate the position held by an in-flight
@@ -100,7 +103,7 @@ static int next_frame(LSCore *c,float *left,float *right){
         c->priming=1;c->envelope=0;c->fade_out=96;
         c->render_trace=(LSRenderSnapshot){.source_frame=UINT64_MAX};
     }
-    uint32_t prime=(uint32_t)(c->rate*.05);
+    uint32_t prime=atomic_load(&c->prime_frames);if(!prime)prime=(uint32_t)(c->rate*.05);
     if(pos==end || (c->priming && end-pos<prime)){
         if(!c->priming){atomic_fetch_add(&c->underruns,1);c->priming=1;c->envelope=0;c->fade_out=0;}
         if(c->fade_out>0){

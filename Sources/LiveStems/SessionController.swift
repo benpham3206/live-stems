@@ -138,9 +138,12 @@ final class SessionController {
         finishQuit()
         return
       }
-      if !outputOn, ls_queued(audio.core) >= 2205 {
-        // Direct Spotify continues during startup. Transfer only once the
-        // renderer has enough Original audio to leave its priming state.
+      audio.setPlaybackRate(pipeline.easeRate)
+      if !outputOn, pipeline.end - pipeline.base >= pipeline.easeCushionFrames + 441 {
+        // Direct Spotify continues during startup. Hand off at the live edge with
+        // a short cushion, then let the ease grow the delay: nothing repeats.
+        pipeline.beginEase()
+        pipeline.step()
         try audio.setOriginalSuppressed(true)
         audio.setOutputEnabled(true)
         outputOn = true
@@ -329,7 +332,7 @@ final class SessionController {
       observedCaptureToRenderSeconds: observedAge,
       fallbacks: p.fallbacks, paused: p.paused, blendWeight: p.weight,
       cacheBytes: p.cacheBytes, cacheLimitBytes: p.memoryLimit, jumps: p.jumps, hardCuts: p.hardCuts,
-      stemsSelected: stemsSelected, modelResting: p.resting, windowFrames: p.windowFrames, hopFrames: p.hop,
+      stemsSelected: stemsSelected, modelResting: p.resting, easing: p.easing, windowFrames: p.windowFrames, hopFrames: p.hop,
       lateResults: p.lateResults, acceptedResults: p.acceptedResults,
       steadyFrames: p.steadyFrames, steadyFullStemFrames: p.steadyFullStemFrames,
       steadyFallbackFrames: p.steadyFallbackFrames, steadyProvisionalFrames: p.steadyProvisionalFrames
