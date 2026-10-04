@@ -11,7 +11,7 @@ Live Stems sits in your menu bar. Its panel has one row per stem, like a Logic P
 - a small **waveform** that shows what that stem is doing right now.
 
 The **All stems** row has an **M** that mutes everything and an **S** that lights up while anything
-is soloed; click it to clear every solo at once, like Logic. **Reset mix** puts every control back to normal.
+is soloed; click it to clear every solo at once, like Logic. **Reset** puts every control back to normal and restarts the stem splitter if it stopped.
 
 It uses [Demucs](https://github.com/facebookresearch/demucs), Meta's music separation model, running
 on your Mac's GPU through [demucs-mlx](https://github.com/ssmall256/demucs-mlx). Nothing is uploaded.
@@ -101,7 +101,8 @@ The first second plays the normal song while the model gets ready. After that, e
   - Spotify paused.
 
   The status line tells you which: *Live stems*, *Original · model asleep*, *All stems muted · model asleep*.
-- **Reset mix** returns every control to normal. The model then sleeps.
+- **Reset** returns every control to normal and brings the stem splitter back, for example after you
+  reopen the app during a Quit. With nothing changed, the model then sleeps.
 - **Skip, seek and pause** in Spotify as usual. Live Stems follows along and rebuilds the stems for the new spot.
 - **Quit Live Stems** fades back to the plain song. The app waits until Spotify pauses before it lets go,
   so your music never cuts out.

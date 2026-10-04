@@ -282,6 +282,20 @@ final class SessionController {
       self.saveDiagnostics()
     }
   }
+  /// Back to the stem splitter from Original or a stopped worker: stems are
+  /// selected, a worker starts if none runs, and Original fades into stems.
+  func restoreStems() { queue.async { self.selectStems() } }
+  private func selectStems() {
+    guard enabled, let audio = audio, let pipeline = pipeline else { return }
+    stemsSelected = true
+    ls_stems(audio.core, 1)
+    trace.record(TraceRecord(event: "mix", generation: pipeline.generation,
+      sourceFrame: pipeline.outputPosition, stemsSelected: true))
+    applyControls()
+    if worker == nil { startProcessor(token: token) }
+    lastStatus = ""
+    status(mixStatus(pipeline))
+  }
   func useLiveSpotify() {
     queue.async {
       guard self.enabled, let audio = self.audio, let pipeline = self.pipeline else {
@@ -373,10 +387,9 @@ final class SessionController {
       self.quitVersion &+= 1
       self.quitCompletion = nil
       guard self.enabled else { return }
-      self.lastStatus = ""
-      self.status("Original mix · processor stopped")
       self.trace.record(TraceRecord(event: "quit-reopen", generation: self.token,
         sourceFrame: self.pipeline?.outputPosition))
+      self.selectStems()
     }
   }
   private func finishQuit() {

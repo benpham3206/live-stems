@@ -133,7 +133,7 @@ final class MenuController: NSObject, NSWindowDelegate {
     statusLabel.stringValue = text
     statusLabel.toolTip = text
     outputLabel.stringValue = "Output: " + output
-    startButton.title = enabled ? "Reset mix" : "Enable live stems"
+    startButton.title = enabled ? "Reset" : "Enable live stems"
     item.button?.title = "Stems"
   }
   private func positionWindow() {
@@ -166,12 +166,13 @@ final class MenuController: NSObject, NSWindowDelegate {
     )
   }
   @objc private func toggle() { if active { resetMix() } else { session.start() } }
-  /// Back to Original: full volume, no mute or solo. The model then sleeps.
+  /// Neutral controls and a live stem splitter again, whatever state it was in.
   private func resetMix() {
     controls = StemControls()
     for slider in sliders { slider.floatValue = 1 }
     for button in muteButtons + soloButtons { button.state = .off }
     applyControls()
+    session.restoreStems()
   }
   @objc private func slide(_ sender: NSSlider) {
     controls.gains[sender.tag] = sender.floatValue

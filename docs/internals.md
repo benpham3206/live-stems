@@ -28,7 +28,8 @@ gain after Mute and Solo, or Spotify is paused. Equal gains play Original at
 that gain, so neutral controls give Original and all-stem mute gives silence.
 Resting stops GPU jobs but keeps the worker loaded. A control change wakes it,
 and stems fade in from the last captured second. Resting frames are not counted
-as steady stem frames. Reset mix returns all controls to neutral.
+as steady stem frames. Reset returns all controls to neutral, selects stems, and starts a worker if none runs. Reopening
+the app during a Quit relay does the same.
 Pause drains the short buffered tail, then stops. Resume keeps the source
 sequence and prepares new model context. A manual skip discards the old queue,
 the last rendered sample, unread capture, and converter carry. Notifications
