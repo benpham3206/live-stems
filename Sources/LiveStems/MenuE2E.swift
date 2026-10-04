@@ -193,4 +193,30 @@ enum MenuE2E {
       "readiness_stays_hidden": true, "reopen_visible": window.isVisible])
     return checks
   }
+  static func snapshot(_ out: URL) throws {
+    // Draws the real controls panel to PNG, light and dark, without screen recording.
+    let controller = MenuController(activateOnStatusClick: false, terminate: {}, start: {})
+    guard let window = controller.e2eWindow, let view = window.contentView else {
+      throw StemError("Snapshot has no panel")
+    }
+    for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+      window.appearance = NSAppearance(named: look)
+      view.layoutSubtreeIfNeeded()
+      let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+      NSAppearance(named: look)!.performAsCurrentDrawingAppearance {
+        view.cacheDisplay(in: view.bounds, to: rep)
+      }
+      let image = NSImage(size: view.bounds.size)
+      image.addRepresentation(rep)
+      NSAppearance(named: look)!.performAsCurrentDrawingAppearance {
+        image.lockFocus()
+        NSColor.windowBackgroundColor.setFill()
+        view.bounds.fill(using: .destinationOver)
+        image.unlockFocus()
+      }
+      try NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
+        .write(to: out.appendingPathComponent("panel-\(name).png"))
+    }
+    print("PASS snapshot · panel-light.png, panel-dark.png")
+  }
 }

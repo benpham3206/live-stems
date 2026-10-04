@@ -20,6 +20,10 @@ final class MenuController: NSObject, NSWindowDelegate {
   private var waveforms: [StemWaveform] = []
   private var muteAllButton: NSButton!, clearSoloButton: NSButton!
   private var meterTimer: Timer?
+  /// First symbol name this macOS has, so newer SF Symbols fall back on older systems.
+  private static func symbol(_ names: [String]) -> NSImage {
+    names.lazy.compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }.first ?? NSImage()
+  }
   private static let muteColor = NSColor(srgbRed: 0.29, green: 0.62, blue: 1, alpha: 1)
   private static let soloColor = NSColor(srgbRed: 1, green: 0.82, blue: 0.2, alpha: 1)
   override convenience init() {
@@ -50,15 +54,24 @@ final class MenuController: NSObject, NSWindowDelegate {
     startButton.target = self
     startButton.action = #selector(resetButton)
     startButton.bezelStyle = .rounded
+    startButton.image = Self.symbol(["arrow.counterclockwise"])
+    startButton.imagePosition = .imageLeading
     content.addSubview(startButton)
     let stemColors: [NSColor] = [.systemPink, .systemOrange, .systemPurple, .systemGreen]
+    // SF Symbols has no drum; a transient waveform stands in. The stand mic is new in SF Symbols 8.
+    let stemSymbols = [["microphone.dynamic.on.stand", "microphone.fill"], ["waveform.path"],
+      ["guitars.fill"], ["sparkles"]]
     for (index, name) in ["Vocals", "Drums", "Bass", "Other"].enumerated() {
       let row = NSView(frame: NSRect(x: 0, y: 269 - index * 64, width: 330, height: 64))
+      let icon = NSImageView(image: Self.symbol(stemSymbols[index]))
+      icon.contentTintColor = stemColors[index]
+      icon.frame = NSRect(x: 14, y: 38, width: 20, height: 20)
+      row.addSubview(icon)
       let label = NSTextField(labelWithString: name)
-      label.frame = NSRect(x: 16, y: 38, width: 64, height: 20)
+      label.frame = NSRect(x: 38, y: 38, width: 56, height: 20)
       row.addSubview(label)
       let waveform = StemWaveform(color: stemColors[index])
-      waveform.frame = NSRect(x: 84, y: 36, width: 170, height: 22)
+      waveform.frame = NSRect(x: 96, y: 36, width: 158, height: 22)
       waveform.setAccessibilityLabel(name + " waveform")
       row.addSubview(waveform)
       waveforms.append(waveform)
@@ -102,6 +115,8 @@ final class MenuController: NSObject, NSWindowDelegate {
     let quit = NSButton(title: "Quit Live Stems", target: self, action: #selector(quitApp))
     quit.frame = NSRect(x: 12, y: 8, width: 306, height: 30)
     quit.bezelStyle = .rounded
+    quit.image = Self.symbol(["power"])
+    quit.imagePosition = .imageLeading
     content.addSubview(quit)
     outputLabel.stringValue = "Output: " + outputName(defaultOutput())
     session.onReady = { [weak self] in
