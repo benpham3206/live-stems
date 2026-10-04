@@ -16,7 +16,8 @@ final class MenuController: NSObject, NSWindowDelegate {
     outputLabel = NSTextField(labelWithString: ""),
     startButton = NSButton(title: "Enable live stems", target: nil, action: nil)
   private var active = false, panelRequested = true, controls = StemControls()
-  private var muteButtons: [NSButton] = [], waveforms: [StemWaveform] = []
+  private var muteButtons: [NSButton] = [], soloButtons: [NSButton] = [], sliders: [NSSlider] = []
+  private var waveforms: [StemWaveform] = []
   private var muteAllButton: NSButton!
   private var meterTimer: Timer?
   private static let muteColor = NSColor(srgbRed: 0.29, green: 0.62, blue: 1, alpha: 1)
@@ -64,6 +65,7 @@ final class MenuController: NSObject, NSWindowDelegate {
       slider.frame = NSRect(x: 16, y: 9, width: 298, height: 22)
       slider.setAccessibilityLabel(name + " volume")
       row.addSubview(slider)
+      sliders.append(slider)
       for (offset, title) in ["Mute", "Solo"].enumerated() {
         let button = LogicToggle(
           letter: String(title.prefix(1)), lit: offset == 0 ? Self.muteColor : Self.soloColor,
@@ -73,7 +75,7 @@ final class MenuController: NSObject, NSWindowDelegate {
         button.setAccessibilityLabel(name + " " + title)
         button.toolTip = title
         row.addSubview(button)
-        if offset == 0 { muteButtons.append(button) }
+        if offset == 0 { muteButtons.append(button) } else { soloButtons.append(button) }
       }
       content.addSubview(row)
     }
@@ -124,7 +126,7 @@ final class MenuController: NSObject, NSWindowDelegate {
     statusLabel.stringValue = text
     statusLabel.toolTip = text
     outputLabel.stringValue = "Output: " + output
-    startButton.title = enabled ? (stems ? "Use original mix" : "Use stems") : "Enable live stems"
+    startButton.title = enabled ? "Reset mix" : "Enable live stems"
     item.button?.title = "Stems"
   }
   private func positionWindow() {
@@ -156,7 +158,14 @@ final class MenuController: NSObject, NSWindowDelegate {
       "Windowing close event=windowWillClose visible=\(self.window.isVisible, privacy: .public) appActive=\(NSApp.isActive, privacy: .public)"
     )
   }
-  @objc private func toggle() { if active { session.toggleMix() } else { session.start() } }
+  @objc private func toggle() { if active { resetMix() } else { session.start() } }
+  /// Back to Original: full volume, no mute or solo. The model then sleeps.
+  private func resetMix() {
+    controls = StemControls()
+    for slider in sliders { slider.floatValue = 1 }
+    for button in muteButtons + soloButtons { button.state = .off }
+    applyControls()
+  }
   @objc private func slide(_ sender: NSSlider) {
     controls.gains[sender.tag] = sender.floatValue
     session.setControls(controls)

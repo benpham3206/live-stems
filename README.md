@@ -21,15 +21,15 @@ fades into fresh stems. A seek or skip builds new context in the same way.
 
 Every result retains its actual source frame range. Processing time determines
 whether it arrives before that frame's playback deadline. A late result uses
-Original at the same frame. It never rewinds the song or increases the buffer.
+the stem-free part of the mix at the same frame: Original at Other's gain. It never rewinds the song or increases the buffer.
 Adjacent estimates blend over 10 ms at identical uncommitted source frames.
 
-Use original mix and Use stems share the same queue and fade over 8 ms. They
-keep capture and the worker active. Neither action changes the playback clock.
-The model rests when its output is not needed: Original is selected, all
-controls are neutral, or Spotify is paused. Resting stops GPU jobs but keeps
-the worker loaded. A control change wakes it, and stems fade in from the last
-captured second. Resting frames are not counted as steady stem frames.
+The model rests when its output is not needed: all four stems have the same
+gain after Mute and Solo, or Spotify is paused. Equal gains play Original at
+that gain, so neutral controls give Original and all-stem mute gives silence.
+Resting stops GPU jobs but keeps the worker loaded. A control change wakes it,
+and stems fade in from the last captured second. Resting frames are not counted
+as steady stem frames. Reset mix returns all controls to neutral.
 Pause drains the short buffered tail, then stops. Resume keeps the source
 sequence and prepares new model context. A manual skip discards the old queue,
 the last rendered sample, unread capture, and converter carry. Notifications
@@ -50,13 +50,10 @@ boundary. A callback that starts after a cut can still contain an older block.
 Only the fresh suffix of a crossing block enters the converter.
 Natural changes keep the captured source sequence and reject old model context.
 
-Neutral controls reproduce Original at unity gain. The difference between the
-stem sum and Original is assigned to Other. Bass Solo uses the bass estimate.
-All-stem mute is silent when full stem coverage and the control fade settle.
-The processed mix limiter allows the larger of 0.98 and that frame's Original
-peak. Original fallback is unchanged after the short startup envelope.
-
-The panel has no separate Return button; Use original mix rests the model.
+Equal gains reproduce Original at that gain without stems. The difference
+between the stem sum and Original is assigned to Other. Bass Solo uses the bass
+estimate. The processed mix limiter allows the larger of 0.98 and that frame's
+Original peak. The panel has no Original/Stems or Return buttons.
 Quit uses the same Original fade, stops the worker, and closes the controls and menu icon.
 A small Original relay keeps the playback clock until Spotify pauses. It then
 drains the queued tail and exits. Open the app again to restore its controls

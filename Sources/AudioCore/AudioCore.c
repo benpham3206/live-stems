@@ -120,28 +120,32 @@ static int next_frame(LSCore *c,float *left,float *right){
     c->stem_blend+=fmaxf(-(float)(1.0/(c->rate*.008)),fminf((float)(1.0/(c->rate*.008)),blend_target-c->stem_blend));
     float weight=fmaxf(0,fminf(1,f[10]))*c->stem_blend;
     c->render_trace.stem_weight=weight;
-    float raw_left=0,raw_right=0;int neutral=1;
+    float raw_left=0,raw_right=0;int uniform=1;
     for(int s=0;s<4;s++){
         uint32_t bits=atomic_load(&c->gains[s]);float target;memcpy(&target,&bits,4);
         if((mute&(1u<<s)) || (solo && !(solo&(1u<<s))))target=0;
         c->smooth[s]+=(target-c->smooth[s])*(float)(1.0/(c->rate*.008));
         if(fabsf(target-c->smooth[s])<1e-5f)c->smooth[s]=target;
-        if(c->smooth[s]!=1)neutral=0;
+        if(c->smooth[s]!=c->smooth[0])uniform=0;
         raw_left+=f[s*2];raw_right+=f[s*2+1];
         *left+=f[s*2]*c->smooth[s];*right+=f[s*2+1]*c->smooth[s];
     }
-    // Assign mixture residual to Other. Neutral controls reconstruct Original;
-    // a solo remains the selected stem, and all-stem mute remains silence.
+    // Assign mixture residual to Other. Equal gains need no stems: the mix is
+    // Original at that gain (neutral is Original, all-stem mute is silence),
+    // so it also holds while the model rests and stem weight is zero.
     *left+=(f[8]-raw_left)*c->smooth[3];*right+=(f[9]-raw_right)*c->smooth[3];
     for(int s=0;s<4;s++){
         float l=f[s*2],r=f[s*2+1];if(s==3){l+=f[8]-raw_left;r+=f[9]-raw_right;}
         c->meter_hold[s]=fmaxf(c->meter_hold[s],fmaxf(fabsf(l),fabsf(r))*weight);
     }
-    if(neutral){*left=f[8];*right=f[9];}
+    if(uniform){*left=f[8]*c->smooth[0];*right=f[9]*c->smooth[0];weight=1;}
     float ceiling=fmaxf(.98f,fmaxf(fabsf(f[8]),fabsf(f[9])));
     float peak=fmaxf(fabsf(*left),fabsf(*right));if(peak>ceiling){float gain=ceiling/peak;*left*=gain;*right*=gain;}
-    *left=(*left*weight+f[8]*(1-weight))*c->envelope;
-    *right=(*right*weight+f[9]*(1-weight))*c->envelope;
+    // Missing stems keep only the stem-free part of the mix: Original at
+    // Other's gain. Original mode (stem_blend 0) still ignores the controls.
+    float fallback=c->stem_blend*c->smooth[3]+(1-c->stem_blend);
+    *left=(*left*weight+f[8]*fallback*(1-weight))*c->envelope;
+    *right=(*right*weight+f[9]*fallback*(1-weight))*c->envelope;
     c->last_left=*left;c->last_right=*right;
     c->render_trace.source_frame=c->output_frames[pos%r->capacity];c->render_trace.capture_nanos=c->output_times[pos%r->capacity];
     atomic_store(&r->read,pos+1);atomic_fetch_add(&c->played,1);return 1;

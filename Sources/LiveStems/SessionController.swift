@@ -238,9 +238,8 @@ final class SessionController {
         ls_controls(core, $0.baseAddress, controls.mute, controls.solo)
       }
     }
-    // Neutral controls render Original exactly, so the model is not needed.
-    let neutral = controls.gains.allSatisfy { $0 == 1 } && controls.mute == 0 && controls.solo == 0
-    pipeline?.setResting(!stemsSelected || neutral)
+    // Equal effective gains render Original at that gain, so stems are not needed.
+    pipeline?.setResting(!stemsSelected || Set(effectiveGains).count == 1)
   }
   func setControls(_ value: StemControls) {
     queue.async {
@@ -258,10 +257,21 @@ final class SessionController {
       DispatchQueue.main.async { done(peaks) }
     }
   }
+  /// Stem gains after mute and solo.
+  private var effectiveGains: [Float] {
+    (0..<4).map { s in
+      let bit: UInt32 = 1 << UInt32(s)
+      return controls.mute & bit != 0 || (controls.solo != 0 && controls.solo & bit == 0) ? 0 : controls.gains[s]
+    }
+  }
   private func mixStatus(_ pipeline: StemPipeline) -> String {
     if pipeline.paused { return pipeline.statusText }
-    if !stemsSelected { return "Original mix · model resting" }
-    if pipeline.resting { return "Neutral mix · model resting" }
+    if !stemsSelected { return "Original mix · model asleep" }
+    if pipeline.resting {
+      let gain = effectiveGains[0]
+      if gain == 0 { return "All stems muted · model asleep" }
+      return gain == 1 ? "Original · model asleep" : "Original at \(Int(gain * 100))% · model asleep"
+    }
     return pipeline.statusText
     return "Original mix"
   }

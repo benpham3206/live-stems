@@ -127,7 +127,33 @@ enum StreamMixerChecks {
     guard pipeline.job() == nil, pipeline.warmupWindow() == nil else {
       throw StemError("Paused Spotify still gave the model a job")
     }
-    return ["checked": true, "pass": true]
+    // While the model rests, frames have no stems. The mix must still follow
+    // the controls: equal gains give Original at that gain; otherwise only the
+    // stem-free part (Original at Other's gain) plays.
+    let frames = 14400
+    var fixture = [Float](repeating: 0, count: frames * 11)
+    for f in 0..<frames {
+      let v = Float(sin(Double(f) * 0.01)) * 0.3, b = Float(sin(Double(f) * 0.05)) * 0.4
+      fixture[f * 11] = v; fixture[f * 11 + 1] = v; fixture[f * 11 + 4] = b; fixture[f * 11 + 5] = b
+      fixture[f * 11 + 8] = v + b; fixture[f * 11 + 9] = v + b
+    }
+    let cases: [(String, [Float], UInt32, UInt32, Float)] = [
+      ("neutral", [1, 1, 1, 1], 0, 0, 1), ("all_muted", [1, 1, 1, 1], 15, 0, 0),
+      ("all_half", [0.5, 0.5, 0.5, 0.5], 0, 0, 0.5), ("bass_solo", [1, 1, 1, 1], 0, 4, 0),
+      ("vocals_muted", [1, 1, 1, 1], 1, 0, 1),
+    ]
+    var errors = [String: Double]()
+    for (name, gains, mute, solo, scale) in cases {
+      guard let mix = ls_create(48000, 48000) else { throw StemError("Cannot allocate resting mix core") }
+      defer { ls_destroy(mix) }
+      gains.withUnsafeBufferPointer { ls_controls(mix, $0.baseAddress, mute, solo) }
+      ls_enable(mix, 1)
+      _ = fixture.withUnsafeBufferPointer { ls_output_write(mix, $0.baseAddress, UInt32(frames)) }
+      let out = StreamE2E.readMix(mix, frames: frames).samples
+      errors[name] = (frames / 2..<frames).map { Double(abs(out[$0 * 2] - scale * fixture[$0 * 11 + 8])) }.max() ?? 1
+      guard errors[name]! < 1e-4 else { throw StemError("Resting mix \(name) did not follow the controls") }
+    }
+    return ["checked": true, "pass": true, "resting_mix_max_error": errors]
   }
   static func sine(at frame: Int) -> Float {
     Float(sin(Double(frame) * 2 * .pi * 440 / 44100)) * 0.5
