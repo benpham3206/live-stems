@@ -76,7 +76,8 @@ final class StemPipeline {
   }
   // After a manual cut the notice precedes the acoustic change by ~50 ms and
   // a true silence gap follows the old-track tail. The first gap start is the
-  // new-track boundary. Playback already continues; only model context moves.
+  // new-track boundary for model context and, while nothing past the cut has
+  // been committed, for playback too: the old tail must not play after the gap.
   private func scanTail(from start: Int) {
     for frame in max(start, base)..<end {
       let at = (frame - base) * 2
@@ -85,6 +86,7 @@ final class StemPipeline {
         if gapRun >= fade {
           let boundary = frame + 1 - gapRun
           contextStart = max(contextStart, boundary); scheduledEnd = max(scheduledEnd, boundary)
+          if outputPosition == cutEnd { outputPosition = boundary }
           tailScanning = false
           onTrace?(TraceRecord(event: "skip-boundary", generation: generation,
             sourceFrame: boundary, sourceEnd: cutEnd))

@@ -33,6 +33,7 @@ struct TraceRecord: Codable {
   var soloMask: UInt32? = nil
   var gains: [Float]? = nil
   var droppedRecords: Int? = nil
+  var outputBufferFrames: UInt32? = nil
 }
 
 // The audio callback only updates atomic values. Encoding and file access

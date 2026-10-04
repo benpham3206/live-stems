@@ -145,7 +145,8 @@ final class SessionController {
         audio.setOutputEnabled(true)
         outputOn = true
         trace.record(TraceRecord(event: "handoff", generation: token,
-          sourceFrame: pipeline.outputPosition, queuedFrames: ls_queued(audio.core)))
+          sourceFrame: pipeline.outputPosition, queuedFrames: ls_queued(audio.core),
+          outputBufferFrames: audio.outputBufferFrames))
         DispatchQueue.main.async { self.onReady?() }
       }
       startJob()

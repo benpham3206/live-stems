@@ -38,6 +38,7 @@ final class AudioSession {
   private var started = false
   private var captureBoundary = 0.0
   private(set) var lastDrainEndHostSeconds = 0.0
+  private(set) var outputBufferFrames: UInt32 = 0
   init() throws {
     do {
       guard outputID != 0 else { throw StemError("No output device") }
@@ -89,6 +90,17 @@ final class AudioSession {
       }
       engine.attach(node!)
       engine.connect(node!, to: engine.mainMixerNode, format: modelFormat)
+      // Audio already handed to the device survives a flush. A small
+      // per-process IO buffer bounds that old-audio leak after a skip.
+      if let unit = engine.outputNode.audioUnit {
+        var frames = UInt32(64)
+        AudioUnitSetProperty(unit, kAudioDevicePropertyBufferFrameSize, kAudioUnitScope_Global, 0,
+          &frames, UInt32(MemoryLayout<UInt32>.size))
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        AudioUnitGetProperty(unit, kAudioDevicePropertyBufferFrameSize, kAudioUnitScope_Global, 0,
+          &frames, &size)
+        outputBufferFrames = frames
+      }
       engine.prepare()
     } catch {
       stop()
