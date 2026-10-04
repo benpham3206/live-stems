@@ -186,10 +186,7 @@ final class MenuController: NSObject, NSWindowDelegate {
   }
   private func applyControls() {
     muteAllButton.state = controls.mute == 0b1111 ? .on : .off
-    for (index, waveform) in waveforms.enumerated() {
-      let bit: UInt32 = 1 << UInt32(index)
-      waveform.dimmed = controls.mute & bit != 0 || (controls.solo != 0 && controls.solo & bit == 0)
-    }
+    for (waveform, gain) in zip(waveforms, controls.effectiveGains) { waveform.dimmed = gain == 0 }
     session.setControls(controls)
   }
   private func configureStatusItem() {
