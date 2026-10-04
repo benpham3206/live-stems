@@ -164,7 +164,6 @@ The GPU-free stages run from a shell:
 
 ```sh
 "/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e transitions --output outputs/live-stems-acceptance/transitions
-"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e quit --output outputs/live-stems-acceptance/transitions-2/repeat-quit
 "/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e quit-race --output outputs/live-stems-acceptance/transitions-2/repeat-race
 "/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e capture-cut --output outputs/live-stems-acceptance/transitions-2/repeat-cut
 ```
