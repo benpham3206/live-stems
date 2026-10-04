@@ -11,7 +11,7 @@ final class SessionController {
   private let stateSource: SpotifyState
   private var token: UInt64 = 0, job: UInt64 = 0, busy = false, enabled = false,
     outputOn = false, stemsSelected = true, warmupsLeft = 0
-  private var awaitingFirstAudio = false, cutHost = 0.0
+  private var awaitingFirstAudio = false, cutHost = 0.0, captureStarted = 0.0
   private var controls = StemControls(), began = 0.0, capturePeak: Float = 0,
     lastCaptureEndHost = 0.0
   private var lastDeviceCheck = 0.0, lastDiagnostics = 0.0, lastStatus = ""
@@ -75,6 +75,7 @@ final class SessionController {
           // samples predate our playback clock and must not become a backlog.
           pipeline.start(generation: token)
           audio.discardCapturedAudio()
+          self.captureStarted = stemClock()
           self.busy = false
           self.began = stemClock()
           self.lastCaptureEndHost = 0
@@ -142,14 +143,21 @@ final class SessionController {
       if !outputOn, pipeline.end - pipeline.base >= pipeline.easeCushionFrames + 441 {
         // Direct Spotify continues during startup. Hand off at the live edge with
         // a short cushion, then let the ease grow the delay: nothing repeats.
+        // macOS can refuse to mute a tap this soon after it starts ('!hog'); keep
+        // Spotify direct and try again next tick rather than end the session.
+        do {
+          try audio.setOriginalSuppressed(true)
+        } catch {
+          guard stemClock() - captureStarted < 3 else { throw error }
+          return
+        }
         pipeline.beginEase()
         pipeline.step()
-        try audio.setOriginalSuppressed(true)
         audio.setOutputEnabled(true)
         outputOn = true
         trace.record(TraceRecord(event: "handoff", generation: token,
-          sourceFrame: pipeline.outputPosition, queuedFrames: ls_queued(audio.core),
-          outputBufferFrames: audio.outputBufferFrames))
+          sourceFrame: pipeline.outputPosition, elapsedSeconds: stemClock() - captureStarted,
+          queuedFrames: ls_queued(audio.core), outputBufferFrames: audio.outputBufferFrames))
         DispatchQueue.main.async { self.onReady?() }
       }
       startJob()
@@ -341,7 +349,7 @@ final class SessionController {
   private func end(_ message: String) {
     let completion = quitCompletion
     quitCompletion = nil
-    trace.record(TraceRecord(event: "stop", generation: token, sourceFrame: pipeline?.outputPosition))
+    trace.record(TraceRecord(event: "stop", generation: token, sourceFrame: pipeline?.outputPosition, reason: message))
     enabled = false
     token += 1
     timer?.cancel()

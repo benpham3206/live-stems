@@ -141,7 +141,9 @@ static int next_frame(LSCore *c,float *left,float *right){
         float l=f[s*2],r=f[s*2+1];if(s==3){l+=f[8]-raw_left;r+=f[9]-raw_right;}
         c->meter_hold[s]=fmaxf(c->meter_hold[s],fmaxf(fabsf(l),fabsf(r))*weight);
     }
-    if(uniform){*left=f[8]*c->smooth[0];*right=f[9]*c->smooth[0];weight=1;}
+    // Equal gains need no stems: the fallback below is then exact (Original at
+    // that gain), and Original mode still ignores the controls.
+    if(uniform)weight=0;
     float ceiling=fmaxf(.98f,fmaxf(fabsf(f[8]),fabsf(f[9])));
     float peak=fmaxf(fabsf(*left),fabsf(*right));if(peak>ceiling){float gain=ceiling/peak;*left*=gain;*right*=gain;}
     // Missing stems keep only the stem-free part of the mix: Original at

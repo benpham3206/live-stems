@@ -138,6 +138,12 @@ the timing trace and action snapshots. It does not use CUA. The `rest` stage
 needs no worker. It checks that the model gets no jobs while it rests or while
 Spotify is paused, and that the resting mix follows the controls.
 
+The `transitions` stage needs no worker. It runs 25 seeds of random skips,
+seeks, pauses, duplicate notices, model sleep and wake, late results, and the
+startup ease. Playback must never go backward, must start within 20 ms of the
+handoff from the live edge, must not underrun outside a transition, and must
+settle at the steady delay.
+
 The signed `quit` stage checks actual capture, worker exit, Original relay,
 reopen, and final drain. It injects the metadata pause locally. It does not
 pause Spotify. The `quit-race` stage uses session barriers to cancel a Quit
@@ -145,7 +151,19 @@ completion already queued on the main run loop. The `capture-cut` stage sends
 old and crossing timestamped blocks through the actual capture callback and
 converter. It saves the converted WAVs and exact comparison.
 
+Launch the live `quit` and `return` stages through `open`, not from a shell.
+Run from a shell, macOS can refuse to mute Spotify's tap ('!hog',
+560492391), and the session stops at the handoff. Quit the normal app first.
+
 ```sh
+open -W -g "/Applications/Live Stems.app" --args --e2e quit --output "$PWD/outputs/live-stems-acceptance/pr2-live/quit"
+open -W -g "/Applications/Live Stems.app" --args --e2e return --output "$PWD/outputs/live-stems-acceptance/pr2-live/return"
+```
+
+The GPU-free stages run from a shell:
+
+```sh
+"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e transitions --output outputs/live-stems-acceptance/transitions
 "/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e quit --output outputs/live-stems-acceptance/transitions-2/repeat-quit
 "/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e quit-race --output outputs/live-stems-acceptance/transitions-2/repeat-race
 "/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e capture-cut --output outputs/live-stems-acceptance/transitions-2/repeat-cut
