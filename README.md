@@ -104,7 +104,8 @@ The first second plays the normal song while the model gets ready. After that, e
 - **Reset** returns every control to normal and brings the stem splitter back, for example after you
   reopen the app during a Quit. With nothing changed, the model then sleeps.
 - **Skip, seek and pause** in Spotify as usual. Live Stems follows along and rebuilds the stems for the new spot.
-- **Quit Live Stems** fades back to the plain song. The app waits until Spotify pauses before it lets go,
+- **Quit Live Stems** resets the mix and fades back to the plain song. If you reopen it, it starts
+  from the original song with the model asleep. The app waits until Spotify pauses before it lets go,
   so your music never cuts out.
 
 Everything you hear is about a third of a second behind Spotify. The delay never changes, so you

@@ -168,11 +168,15 @@ final class MenuController: NSObject, NSWindowDelegate {
   @objc private func toggle() { if active { resetMix() } else { session.start() } }
   /// Neutral controls and a live stem splitter again, whatever state it was in.
   private func resetMix() {
+    resetControls()
+    session.restoreStems()
+  }
+  /// Full volume, no mute or solo: Original, so the model sleeps.
+  private func resetControls() {
     controls = StemControls()
     for slider in sliders { slider.floatValue = 1 }
     for button in muteButtons + soloButtons { button.state = .off }
     applyControls()
-    session.restoreStems()
   }
   @objc private func slide(_ sender: NSSlider) {
     controls.gains[sender.tag] = sender.floatValue
@@ -216,6 +220,7 @@ final class MenuController: NSObject, NSWindowDelegate {
     panelRequested = false
     window.orderOut(nil)
     NSStatusBar.system.removeStatusItem(item)
+    resetControls()  // a reopen starts from Original with the model asleep
     session.quit(completion: terminate)
   }
   func reopen() {

@@ -167,6 +167,9 @@ enum MenuE2E {
     guard let content = window.contentView,
       let quit = descendants(of: content).compactMap({ $0 as? NSButton })
         .first(where: { $0.title == "Quit Live Stems" }) else { throw StemError("Quit button missing") }
+    let drumsMute = try control(named: "Drums Mute", in: window)
+    drumsMute.performClick(nil)
+    pump()
     quit.performClick(nil)
     pump()
     try require(!window.isVisible, "Quit kept controls visible")
@@ -177,6 +180,7 @@ enum MenuE2E {
     controller.reopen()
     pump()
     try require(window.isVisible, "Relay reopen did not restore controls")
+    try require(drumsMute.state == .off, "Quit did not reset the mix to Original")
     try require(controller.e2eStatusButton?.title == "Stems", "Relay reopen lost its status item")
     try require(app.isActive == launchActive, "Relay E2E stole app focus")
     checks.append(["name": "quit_and_reopen", "inactive_completion_count": quitCompletions,
