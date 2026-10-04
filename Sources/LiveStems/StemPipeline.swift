@@ -21,6 +21,8 @@ final class StemPipeline {
   private(set) var lateResults = 0, acceptedResults = 0, partialResults = 0
   private(set) var steadyFrames = 0, steadyFullStemFrames = 0, steadyFallbackFrames = 0
   private(set) var steadyProvisionalFrames = 0
+  // The model rests while the mix equals Original. Resting frames are not steady stem frames.
+  private(set) var resting = false
   var timings = [Double]()
   private var history = [Float](), ready = [Chunk]()
   private var provisional: Chunk?
@@ -153,6 +155,13 @@ final class StemPipeline {
     snapshot = nil
     paused = false
   }
+  func setResting(_ value: Bool) {
+    guard value != resting else { return }
+    resting = value
+    onTrace?(TraceRecord(event: value ? "model-rest" : "model-wake", generation: generation, sourceFrame: outputPosition))
+    // Waking rebuilds context from the last captured second, so the first job can start now.
+    if !value { resetProcessor() }
+  }
   func resetProcessor() {
     generation += 1; version += 1
     contextStart = max(base, end - windowFrames)
@@ -174,14 +183,14 @@ final class StemPipeline {
     // Post-skip context rebuild idles the worker for ~1 s while the GPU goes
     // cold. Rehearse the latest full second at the steady hop; the caller
     // discards these results. Never competes with a real window.
-    guard !paused, end - base >= windowFrames, end - contextStart < windowFrames else { return nil }
+    guard !paused, !resting, end - base >= windowFrames, end - contextStart < windowFrames else { return nil }
     let window = (end - windowFrames)..<end
     let offset = (window.lowerBound - base) * 2
     return AudioWindow(range: FrameRange(generation: generation, start: UInt64(window.lowerBound),
       count: UInt32(windowFrames)), samples: Array(history[offset..<offset + windowFrames * 2]))
   }
   func job() -> AudioWindow? {
-    guard inflight == nil, !paused else { return nil }
+    guard inflight == nil, !paused, !resting else { return nil }
     let windowEnd = end
     guard windowEnd - contextStart >= windowFrames, windowEnd - scheduledEnd >= hop else { return nil }
     let window = (windowEnd - windowFrames)..<windowEnd
@@ -306,7 +315,7 @@ final class StemPipeline {
         onTrace?(TraceRecord(event: traceCovered ? "coverage-restored" : "coverage-gap",
           generation: generation, sourceFrame: frame, blend: weight))
       }
-      if frame >= contextStart + windowFrames {
+      if !resting, frame >= contextStart + windowFrames {
         steadyFrames += 1
         if weight >= 0.999 { steadyFullStemFrames += 1 }
         if weight < 0.001 { steadyFallbackFrames += 1 }

@@ -26,6 +26,10 @@ Adjacent estimates blend over 10 ms at identical uncommitted source frames.
 
 Use original mix and Use stems share the same queue and fade over 8 ms. They
 keep capture and the worker active. Neither action changes the playback clock.
+The model rests when its output is not needed: Original is selected, all
+controls are neutral, or Spotify is paused. Resting stops GPU jobs but keeps
+the worker loaded. A control change wakes it, and stems fade in from the last
+captured second. Resting frames are not counted as steady stem frames.
 Pause drains the short buffered tail, then stops. Resume keeps the source
 sequence and prepares new model context. A manual skip discards the old queue,
 the last rendered sample, unread capture, and converter carry. Notifications
@@ -52,10 +56,8 @@ All-stem mute is silent when full stem coverage and the control fade settle.
 The processed mix limiter allows the larger of 0.98 and that frame's Original
 peak. Original fallback is unchanged after the short startup envelope.
 
-Return to live Spotify fades to Original on the same queue and stops the model
-worker. It keeps the small shared buffer, so the song does not jump. Use stems
-starts a fresh worker. Use original mix keeps the worker active. Quit uses the
-same Original fade, stops the worker, and closes the controls and menu icon.
+The panel has no separate Return button; Use original mix rests the model.
+Quit uses the same Original fade, stops the worker, and closes the controls and menu icon.
 A small Original relay keeps the playback clock until Spotify pauses. It then
 drains the queued tail and exits. Open the app again to restore its controls
 and cancel the pending exit. The relay does not run the model.

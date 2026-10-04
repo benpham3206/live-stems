@@ -8,14 +8,13 @@ final class MenuController: NSObject, NSWindowDelegate {
   private let activatesOnStatusClick: Bool
   private let terminate: () -> Void
   private let window = NSWindow(
-    contentRect: NSRect(x: 0, y: 0, width: 330, height: 460),
+    contentRect: NSRect(x: 0, y: 0, width: 330, height: 426),
     styleMask: [.titled, .closable], backing: .buffered,
     defer: false)
   private let windowLog = Logger(subsystem: "com.benpham.livestems", category: "Windowing")
   private let statusLabel = NSTextField(labelWithString: "Live Spotify · original"),
     outputLabel = NSTextField(labelWithString: ""),
-    startButton = NSButton(title: "Enable live stems", target: nil, action: nil),
-    liveButton = NSButton(title: "Return to live Spotify", target: nil, action: nil)
+    startButton = NSButton(title: "Enable live stems", target: nil, action: nil)
   private var active = false, panelRequested = true, controls = StemControls()
   private var muteButtons: [NSButton] = [], waveforms: [StemWaveform] = []
   private var muteAllButton: NSButton!
@@ -35,21 +34,21 @@ final class MenuController: NSObject, NSWindowDelegate {
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     window.delegate = self
     window.level = .floating
-    let content = NSView(frame: NSRect(x: 0, y: 0, width: 330, height: 460))
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 330, height: 426))
     window.contentView = content
-    statusLabel.frame = NSRect(x: 16, y: 427, width: 298, height: 20)
+    statusLabel.frame = NSRect(x: 16, y: 393, width: 298, height: 20)
     content.addSubview(statusLabel)
-    outputLabel.frame = NSRect(x: 16, y: 405, width: 298, height: 18)
+    outputLabel.frame = NSRect(x: 16, y: 371, width: 298, height: 18)
     outputLabel.font = .systemFont(ofSize: 11)
     content.addSubview(outputLabel)
-    startButton.frame = NSRect(x: 12, y: 367, width: 306, height: 30)
+    startButton.frame = NSRect(x: 12, y: 333, width: 306, height: 30)
     startButton.target = self
     startButton.action = #selector(toggle)
     startButton.bezelStyle = .rounded
     content.addSubview(startButton)
     let stemColors: [NSColor] = [.systemPink, .systemOrange, .systemPurple, .systemGreen]
     for (index, name) in ["Vocals", "Drums", "Bass", "Other"].enumerated() {
-      let row = NSView(frame: NSRect(x: 0, y: 303 - index * 64, width: 330, height: 64))
+      let row = NSView(frame: NSRect(x: 0, y: 269 - index * 64, width: 330, height: 64))
       let label = NSTextField(labelWithString: name)
       label.frame = NSRect(x: 16, y: 38, width: 64, height: 20)
       row.addSubview(label)
@@ -79,20 +78,14 @@ final class MenuController: NSObject, NSWindowDelegate {
       content.addSubview(row)
     }
     let allLabel = NSTextField(labelWithString: "All stems")
-    allLabel.frame = NSRect(x: 16, y: 85, width: 100, height: 20)
+    allLabel.frame = NSRect(x: 16, y: 51, width: 100, height: 20)
     content.addSubview(allLabel)
     muteAllButton = LogicToggle(
       letter: "M", lit: Self.muteColor, target: self, action: #selector(muteAll(_:)))
-    muteAllButton.frame = NSRect(x: 262, y: 84, width: 24, height: 22)
+    muteAllButton.frame = NSRect(x: 262, y: 50, width: 24, height: 22)
     muteAllButton.setAccessibilityLabel("Mute all")
     muteAllButton.toolTip = "Mute all stems"
     content.addSubview(muteAllButton)
-    liveButton.frame = NSRect(x: 12, y: 42, width: 306, height: 30)
-    liveButton.bezelStyle = .rounded
-    liveButton.target = self
-    liveButton.action = #selector(returnToLive)
-    liveButton.isEnabled = false
-    content.addSubview(liveButton)
     let quit = NSButton(title: "Quit Live Stems", target: self, action: #selector(quitApp))
     quit.frame = NSRect(x: 12, y: 8, width: 306, height: 30)
     quit.bezelStyle = .rounded
@@ -132,7 +125,6 @@ final class MenuController: NSObject, NSWindowDelegate {
     statusLabel.toolTip = text
     outputLabel.stringValue = "Output: " + output
     startButton.title = enabled ? (stems ? "Use original mix" : "Use stems") : "Enable live stems"
-    liveButton.isEnabled = enabled
     item.button?.title = "Stems"
   }
   private func positionWindow() {
@@ -165,7 +157,6 @@ final class MenuController: NSObject, NSWindowDelegate {
     )
   }
   @objc private func toggle() { if active { session.toggleMix() } else { session.start() } }
-  @objc private func returnToLive() { session.useLiveSpotify() }
   @objc private func slide(_ sender: NSSlider) {
     controls.gains[sender.tag] = sender.floatValue
     session.setControls(controls)

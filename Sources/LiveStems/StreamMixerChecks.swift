@@ -94,6 +94,41 @@ enum StreamMixerChecks {
       "accepted_results": pipeline.acceptedResults, "discarded": pipeline.discarded]
   }
 
+  // Worker-free proof that the model gets no jobs while resting or while
+  // Spotify is paused, and that waking can start a job at once.
+  static func resting() throws -> [String: Any] {
+    guard let core = ls_create(44100, 44100) else { throw StemError("Cannot allocate resting check core") }
+    defer { ls_destroy(core) }
+    let pipeline = StemPipeline(core: core)
+    pipeline.start(generation: 1)
+    func observe(playing: Bool) {
+      pipeline.observe(PlaybackSnapshot(trackID: "rest", title: "Rest", duration: 60,
+        position: 0, isPlaying: playing), hostTime: stemClock())
+    }
+    func drive(_ count: Int) {
+      pipeline.ingest((0..<count * 2).map { Float(sin(Double($0) * 0.01)) * 0.5 }, hostTime: stemClock())
+      pipeline.step()
+    }
+    observe(playing: true)
+    drive(88200)
+    pipeline.setResting(true)
+    let steadyBefore = pipeline.steadyFrames
+    drive(44100)
+    guard pipeline.job() == nil, pipeline.warmupWindow() == nil else {
+      throw StemError("Resting model was given a job")
+    }
+    guard pipeline.steadyFrames == steadyBefore else {
+      throw StemError("Resting frames were counted as steady stem frames")
+    }
+    pipeline.setResting(false)
+    guard pipeline.job() != nil else { throw StemError("Waking model could not start a job at once") }
+    observe(playing: false)
+    drive(4410)
+    guard pipeline.job() == nil, pipeline.warmupWindow() == nil else {
+      throw StemError("Paused Spotify still gave the model a job")
+    }
+    return ["checked": true, "pass": true]
+  }
   static func sine(at frame: Int) -> Float {
     Float(sin(Double(frame) * 2 * .pi * 440 / 44100)) * 0.5
   }

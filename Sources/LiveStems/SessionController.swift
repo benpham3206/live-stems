@@ -238,6 +238,9 @@ final class SessionController {
         ls_controls(core, $0.baseAddress, controls.mute, controls.solo)
       }
     }
+    // Neutral controls render Original exactly, so the model is not needed.
+    let neutral = controls.gains.allSatisfy { $0 == 1 } && controls.mute == 0 && controls.solo == 0
+    pipeline?.setResting(!stemsSelected || neutral)
   }
   func setControls(_ value: StemControls) {
     queue.async {
@@ -256,7 +259,10 @@ final class SessionController {
     }
   }
   private func mixStatus(_ pipeline: StemPipeline) -> String {
-    if stemsSelected || pipeline.paused { return pipeline.statusText }
+    if pipeline.paused { return pipeline.statusText }
+    if !stemsSelected { return "Original mix · model resting" }
+    if pipeline.resting { return "Neutral mix · model resting" }
+    return pipeline.statusText
     return "Original mix"
   }
   func toggleMix() {
@@ -266,6 +272,7 @@ final class SessionController {
       self.trace.record(TraceRecord(event: "mix", generation: pipeline.generation,
         sourceFrame: pipeline.outputPosition, stemsSelected: self.stemsSelected))
       ls_stems(audio.core, self.stemsSelected ? 1 : 0)
+      self.applyControls()
       if self.stemsSelected, self.worker == nil { self.startProcessor(token: self.token) }
       self.lastStatus = ""
       self.status(self.mixStatus(pipeline))
@@ -305,7 +312,7 @@ final class SessionController {
       observedCaptureToRenderSeconds: observedAge,
       fallbacks: p.fallbacks, paused: p.paused, blendWeight: p.weight,
       cacheBytes: p.cacheBytes, cacheLimitBytes: p.memoryLimit, jumps: p.jumps, hardCuts: p.hardCuts,
-      stemsSelected: stemsSelected, windowFrames: p.windowFrames, hopFrames: p.hop,
+      stemsSelected: stemsSelected, modelResting: p.resting, windowFrames: p.windowFrames, hopFrames: p.hop,
       lateResults: p.lateResults, acceptedResults: p.acceptedResults,
       steadyFrames: p.steadyFrames, steadyFullStemFrames: p.steadyFullStemFrames,
       steadyFallbackFrames: p.steadyFallbackFrames, steadyProvisionalFrames: p.steadyProvisionalFrames

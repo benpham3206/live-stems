@@ -266,6 +266,8 @@ def sustained_stage(duration):
         while time.monotonic() - began < duration:
             state = json.loads(DIAGNOSTICS.read_text())
             assert state['active'], 'Live stems stopped'
+            assert not state.get('modelResting', False), \
+                'Model is resting (neutral mix or Original). Move any slider or use Mute/Solo, then rerun.'
             now = time.monotonic()
             assert now - state['observedUptime'] < 5, 'Native diagnostics stopped'
             if last is None:
