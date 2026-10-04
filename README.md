@@ -145,7 +145,9 @@ It checks clock advancement, bounded history and ready data, fixed delay, zero
 rewinds, actual per-frame stem coverage, underruns, and sampled process CPU/RAM. CPU uses one core as 100 percent.
 It also checks actual capture-to-render age, with a 200–450 ms range after
 startup and source changes settle. The configured buffer alone cannot prove
-observed latency. These samples do not measure GPU or peak load. A passing fixture is not proof
+observed latency. Each sample also records whole-GPU utilization from IOKit. The report gives mean
+and maximum GPU and CPU load. GPU load is not per process. Samples are 5 s apart,
+so they do not show peak load. A passing fixture is not proof
 of live capture or human sound quality. Current results and limitations are in
 `outputs/live-stems-state.md`.
 
