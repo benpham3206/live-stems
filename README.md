@@ -1,179 +1,154 @@
 # Live Stems
 
-Live Stems is a local macOS menu bar app. It captures Spotify through a private
-process tap. Four fine-tuned Demucs models split vocals, drums, bass, and Other.
-The app does not require a prepared track or a cached replay.
+**Split whatever Spotify is playing into vocals, drums, bass and everything else, live, on your Mac.**
+Mute the vocals for karaoke, solo the bass to learn a line, or turn the drums down, on any song,
+while it plays. No downloads, no prepared tracks: the separation happens as the music plays.
 
-## Playback
+Live Stems sits in your menu bar. Its panel has one row per stem, like a Logic Pro track header:
 
-The processor uses one-second input windows. It requests a new result every
-at least 100 ms after the previous request. Each result supplies the new source
-frames since that request. The usable output ends 50 ms before the input ends.
-Window ends follow actual capture blocks. They are not rounded to a time grid.
-The model uses short-context single-pass inference. This changes the estimates
-compared with full contextual inference, even though the weights are the same.
+- a **volume slider**,
+- **M** (mute, blue) and **S** (solo, yellow) buttons,
+- a small **waveform** that shows what that stem is doing right now.
 
-Original and stems share a fixed 260 ms producer buffer. The native output
-queue and conversion add time. The current live Return test measures about
-339 ms from capture to render. This excludes physical device latency. The model warms before capture starts. The first
-captured second plays Original while the processor builds context. It then
-fades into fresh stems. A seek or skip builds new context in the same way.
+An **All stems M** button mutes everything, and **Reset mix** puts every control back to normal.
 
-Every result retains its actual source frame range. Processing time determines
-whether it arrives before that frame's playback deadline. A late result uses
-the stem-free part of the mix at the same frame: Original at Other's gain. It never rewinds the song or increases the buffer.
-Adjacent estimates blend over 10 ms at identical uncommitted source frames.
+It uses [Demucs](https://github.com/facebookresearch/demucs), Meta's music separation model, running
+on your Mac's GPU through [demucs-mlx](https://github.com/ssmall256/demucs-mlx). Nothing is uploaded.
+Audio never leaves your Mac and is never saved to disk.
 
-The model rests when its output is not needed: all four stems have the same
-gain after Mute and Solo, or Spotify is paused. Equal gains play Original at
-that gain, so neutral controls give Original and all-stem mute gives silence.
-Resting stops GPU jobs but keeps the worker loaded. A control change wakes it,
-and stems fade in from the last captured second. Resting frames are not counted
-as steady stem frames. Reset mix returns all controls to neutral.
-Pause drains the short buffered tail, then stops. Resume keeps the source
-sequence and prepares new model context. A manual skip discards the old queue,
-the last rendered sample, unread capture, and converter carry. Notifications
-publish without waiting for the blocking metadata reader. Stale reads cannot
-restore a track after a skip. A cut inside one second of the last cut that
-names either side of it is the same transition, not a new skip. The render
-fades the last sample over 2 ms at a flush instead of cutting hard. The
-notice precedes the acoustic change by about 50 ms and a silence gap follows
-the old-track tail, so the first gap start becomes the new model boundary
-without delaying playback. The post-skip rebuild rehearses the latest second
-at the steady hop (results discarded) so the first real jobs are not cold.
-Each result keeps its 50 ms right-context tail as a provisional estimate. A
-partly late result commits its uncommitted suffix, and missing frames use the
-tail instead of Original. The next result replaces provisional frames with a
-short crossfade. Jobs also start on result arrival, not only on the 10 ms tick.
-The cut also rejects samples with hardware timestamps before the notification
-boundary. A callback that starts after a cut can still contain an older block.
-Only the fresh suffix of a crossing block enters the converter.
-Natural changes keep the captured source sequence and reject old model context.
+## What you need
 
-Equal gains reproduce Original at that gain without stems. The difference
-between the stem sum and Original is assigned to Other. Bass Solo uses the bass
-estimate. The processed mix limiter allows the larger of 0.98 and that frame's
-Original peak. The panel has no Original/Stems or Return buttons.
-Quit uses the same Original fade, stops the worker, and closes the controls and menu icon.
-A small Original relay keeps the playback clock until Spotify pauses. It then
-drains the queued tail and exits. Open the app again to restore its controls
-and cancel the pending exit. The relay does not run the model.
+- A Mac with **Apple Silicon** running **macOS 26 or newer**. Built and tested on an **M3 Max**. The model
+  must finish each job in under 0.1 s; on slower chips, stems may drop out to the plain song more often.
+- The **Spotify** desktop app.
+- **Python 3.12** (for example `brew install python@3.12`).
+- Apple's **Command Line Tools**, to build the app (`xcode-select --install` if you don't have them).
+- About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB), and **1–2 GB of memory** while it runs.
 
-At cold startup, direct Spotify remains audible while the worker warms and the
-Original queue fills. Capture takes over only with at least 50 ms queued.
-This removes the empty-queue mute. Direct Spotify and captured playback still
-have an initial timing offset of about 340 ms. Within captured playback,
-Original and stems use the same source frames.
+## Install
 
-Capture history is bounded to three seconds and compacts to two seconds. Ready
-stem data has an 8 MiB bound. No song library or long track cache is retained.
-The model allocation cache has a 1 GiB bound. Live process memory and inference
-deadlines remain acceptance checks. Only one app instance can acquire capture.
-Metadata is used to invalidate context on seeks and track changes. The captured
-sample clock remains the authority for audio alignment.
+Live Stems is built on your Mac from this source. Most of the time goes to downloads.
+All commands go in **Terminal** (press ⌘-Space and type "Terminal").
 
-## Build and use
+### 1. Get the code
 
-Requirements: macOS 26 or later on Apple Silicon, Spotify on this Mac, the local
-Python environment at `work/stems-venv`, and the four-model `htdemucs_ft` files
-under `work/model-cache`. The app does not download songs or model files.
-
-The stable signing certificate ID is in `work/live-stems-signing-identity.txt`.
-The bundle identifier is `com.benpham.livestems`.
+The app expects this folder layout, so clone it exactly like this:
 
 ```sh
-bash outputs/live-stems-source/script/build_and_run.sh --build-only
+mkdir -p ~/LiveStems/outputs ~/LiveStems/work
+git clone https://github.com/benpham3206/live-stems.git ~/LiveStems/outputs/live-stems-source
+cd ~/LiveStems
 ```
 
-The installer signs and checks the staged bundle before it stops or replaces
-an installed build. An invalid certificate leaves the installed app intact.
-The previous bundle remains under `work/`. The installer updates the matching
-copy in `/Applications`, then `~/Applications`, then the old workspace path.
-Open `/Applications/Live Stems.app`, then
-select Enable live stems. The controls panel remains available across Spaces.
-It is shown when capture becomes ready, unless you closed it. Use the four
-volume, Mute, and Solo controls. Each stem row has M and S buttons and a small
-waveform. The waveform shows the stem's level before its fader, so a muted stem
-still shows its content, dimmed. It is flat while Original plays. The All
-stems M button mutes or unmutes all four stems.
+Every command below runs from `~/LiveStems`.
 
-The app does not change drivers, the default output, Logic settings, TCC data,
-or system protection. The Spotify reader uses background Apple Events. The
-bundle keeps the same signed identity across updates.
-
-## Verification
-
-Live timing logs are local under `~/Library/Application Support/Live Stems/`.
-`live-trace.jsonl` records mix changes, source frames, job windows and durations,
-coverage gaps, queue depth, and thermal state. Late and partly late results,
-provisional cover, skip boundaries with the old-track tail length, duplicate
-cuts, warmup jobs, and first post-cut audio are recorded with frame counts. `worker-timing.jsonl` records
-model computation, output transfer, and MLX memory. Each log has a 2 MiB limit
-and one previous file. The trace records timing only; it does not record audio
-or song titles. File writes run outside the audio callback.
-
-Capture-to-render time uses the captured host timestamp and the render callback
-host timestamp. Sample-rate conversion contributes an estimate. Device latency
-is not measured. Track-relative position is also an estimate. The configured
-producer buffer is separate from this observed value.
+### 2. Set up Python and the model
 
 ```sh
-tail -f "$HOME/Library/Application Support/Live Stems/live-trace.jsonl"
-python3 outputs/live-stems-source/e2e/trace_report.py --output outputs/live-stems-acceptance/sustained-repair/live-trace-report.json
-python3 outputs/live-stems-source/e2e/trace_report.py --follow
+python3.12 -m venv work/stems-venv
+work/stems-venv/bin/pip install "demucs-mlx[convert]==1.5.3"
+work/stems-venv/bin/python -m demucs_mlx.mlx_convert htdemucs_ft --output-dir work/model-cache
 ```
 
-User action logs are also available in Console under subsystem
-`com.benpham.livestems`, categories `Timing` and `Windowing`.
+The last command downloads Meta's `htdemucs_ft` model (four fine-tuned models, one per stem) and
+converts it for your GPU.
 
-Failure criteria are in `e2e/stream-failures.md`. Run one GPU worker at a time.
-Disable the installed processor while running the fixture and packet stages.
+### 3. Make a signing certificate (one time)
+
+macOS asks for permission to capture Spotify's audio. It only remembers your answer if every build
+of the app has the same signature, so the app is signed with a certificate of your own:
+
+1. Open **Keychain Access** and choose **Keychain Access > Certificate Assistant > Create a Certificate…**
+2. Name it `Live Stems Local`, set **Certificate Type** to **Code Signing**, and click **Create**.
+3. Save its ID for the build script:
 
 ```sh
-work/stems-venv/bin/python outputs/live-stems-source/e2e/run.py --stage stream --output outputs/live-stems-acceptance/short-stream
-work/stems-venv/bin/python outputs/live-stems-source/e2e/run.py --stage recovery --output outputs/live-stems-acceptance/short-stream
-work/stems-venv/bin/python outputs/live-stems-source/e2e/run.py --stage worker --output outputs/live-stems-acceptance/short-stream
-work/stems-venv/bin/python outputs/live-stems-source/e2e/run.py --stage sustained --duration 120 --output outputs/live-stems-acceptance/sustained-repair/final-live
-work/stems-venv/bin/python outputs/live-stems-source/e2e/signing.py
+security find-identity -p codesigning | grep -m1 "Live Stems Local" | awk '{print $2}' > work/live-stems-signing-identity.txt
 ```
 
-The paced stream test uses audible source passages and real model output. It
-covers fresh playback, seeks, pause/resume, natural/manual changes, mix controls,
-and a deliberately late result. It saves source/output WAVs, commit records,
-frame comparisons, model timing, and a pass/fail report.
+The file must hold one 40-character ID. If the build later says *"A stable signing certificate is
+required"*, check this file. If you already have an **Apple Development** certificate from Xcode, you
+can use its ID instead (`security find-identity -p codesigning` lists them).
 
-The live monitor reads `~/Library/Application Support/Live Stems/active-session.json`.
-It checks clock advancement, bounded history and ready data, fixed delay, zero
-rewinds, actual per-frame stem coverage, underruns, and sampled process CPU/RAM. CPU uses one core as 100 percent.
-It also checks actual capture-to-render age, with a 200–450 ms range after
-startup and source changes settle. The configured buffer alone cannot prove
-observed latency. Each sample also records whole-GPU utilization from IOKit. The report gives mean
-and maximum GPU and CPU load. GPU load is not per process. Samples are 5 s apart,
-so they do not show peak load. A passing fixture is not proof
-of live capture or human sound quality. Current results and limitations are in
-`outputs/live-stems-state.md`.
-
-The native `skip`, `skip-state`, `trace`, `startup`, and `menu` stages run through
-the release binary with `--e2e <stage> --output <directory>`. The `return` stage
-uses the signed app, live Spotify capture, and the real worker. Close the normal
-app and leave Spotify playing before that stage. It checks Return, cancellation
-during worker startup, and recovery without a playback clock reset. It saves
-the timing trace and action snapshots. It does not use CUA.
-
-The signed `quit` stage checks actual capture, worker exit, Original relay,
-reopen, and final drain. It injects the metadata pause locally. It does not
-pause Spotify. The `quit-race` stage uses session barriers to cancel a Quit
-completion already queued on the main run loop. The `capture-cut` stage sends
-old and crossing timestamped blocks through the actual capture callback and
-converter. It saves the converted WAVs and exact comparison.
+### 4. Build and open it
 
 ```sh
-"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e quit --output outputs/live-stems-acceptance/transitions-2/repeat-quit
-"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e quit-race --output outputs/live-stems-acceptance/transitions-2/repeat-race
-"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e capture-cut --output outputs/live-stems-acceptance/transitions-2/repeat-cut
+bash outputs/live-stems-source/script/build_and_run.sh
 ```
 
-The earlier cache and no-rewind reports describe previous builds. They are not
-acceptance for this stream processor. The local A/B page under
-`outputs/live-stems-acceptance/ft-continuous` compares short context to a full
-contextual reference. Similarity scores are not separation accuracy scores.
+This builds the app, signs it, puts it in `/Applications/Live Stems.app` and opens it. When macOS asks
+whether `codesign` may use your certificate, enter your Mac password and click **Always Allow**.
+Run the same command again to update after `git pull`. The previous version is kept in `work/`.
+
+## First launch
+
+1. Play something in Spotify.
+2. Click **Stems** in the menu bar to show the panel, then click **Enable live stems**.
+3. macOS asks two questions. Allow both:
+   - **Record system audio**, so Live Stems can hear Spotify.
+   - **Control Spotify**, so it can read what is playing and notice skips and pauses.
+
+The first second plays the normal song while the model gets ready. After that, every control works.
+
+## Using it
+
+- **Move a slider, press M or S:** the stems fade in within a second.
+- **Waveforms** show each stem's level before its slider. A muted stem still shows its waveform, dimmed.
+  They are flat while the model sleeps.
+- **The model sleeps when it isn't needed**, so your GPU and battery rest:
+  - all four stems at the same volume (untouched, all muted, or all at the same level),
+  - Spotify paused.
+
+  The status line tells you which: *Live stems*, *Original · model asleep*, *All stems muted · model asleep*.
+- **Reset mix** returns every control to normal. The model then sleeps.
+- **Skip, seek and pause** in Spotify as usual. Live Stems follows along and rebuilds the stems for the new spot.
+- **Quit Live Stems** fades back to the plain song. The app waits until Spotify pauses before it lets go,
+  so your music never cuts out.
+
+Everything you hear is about a third of a second behind Spotify. The delay never changes, so you
+won't notice it unless you watch Spotify's lyrics or progress bar.
+
+## How it works
+
+Spotify's audio is tapped before it reaches your speakers and held for 260 ms. Ten times a second,
+the newest second of audio goes to the model, which returns four stems. The app keeps only the newest
+tenth of a second of each answer and blends the answers together. Your sliders then remix the stems as
+they play. If an answer is ever late, that moment plays the parts of your mix that don't need stems
+instead of glitching. The song never rewinds or drifts.
+
+The details, numbers and test plan are in [docs/internals.md](docs/internals.md).
+
+## Something wrong?
+
+| Problem | Try this |
+|---|---|
+| Build says *"A stable signing certificate is required"* | Redo [step 3](#3-make-a-signing-certificate-one-time). The ID file must hold one 40-character ID. |
+| Build says *"The local Python environment is missing"* | Redo [step 2](#2-set-up-python-and-the-model). The folder layout from step 1 must match exactly. |
+| macOS asks for audio permission after every update | The app's signature changed. Check that `work/live-stems-signing-identity.txt` still names your certificate. |
+| Status says *"Spotify capture silent · live Spotify restored"* | Spotify was silent for 10 seconds after you enabled stems. Play something, then enable again. |
+| Status says *"Output changed · live Spotify restored"* | You switched speakers or headphones. Click **Enable live stems** again. |
+| Stems drop out for a moment now and then | The GPU is busy with something else (games, video, editing apps). Live Stems plays the plain song for that moment rather than glitching. |
+| The screen flickers and Live Stems stops | macOS restarted the GPU. Save the files named `gpuEvent-*` in `/Library/Logs/DiagnosticReports` and open an issue. |
+
+Live Stems keeps small timing logs, never audio or song titles, in
+`~/Library/Application Support/Live Stems/`. Each log is capped at 2 MB.
+
+## Uninstall
+
+1. Choose **Quit Live Stems** in the panel.
+2. Move `/Applications/Live Stems.app`, `~/Library/Application Support/Live Stems` and `~/LiveStems` to the Trash.
+3. Optional: delete the `Live Stems Local` certificate in **Keychain Access**, and remove Live Stems under
+   **System Settings > Privacy & Security** (Screen & System Audio Recording, and Automation).
+
+## Credits and disclaimer
+
+Live Stems is an unofficial personal project by Ben Pham. It isn't affiliated with, endorsed by, or
+sponsored by Spotify or Meta. Spotify is a trademark of Spotify AB.
+
+Separation uses [Demucs](https://github.com/facebookresearch/demucs) by Meta AI Research and its
+MLX port [demucs-mlx](https://github.com/ssmall256/demucs-mlx). The model weights are downloaded from
+their official source during install. They are not part of this repository.
+
+Live Stems captures Spotify through a macOS audio tap and reads Spotify's state with Apple Events. A
+Spotify or macOS update could break it. It is meant for personal listening and practice: don't use
+it to copy or share music.
