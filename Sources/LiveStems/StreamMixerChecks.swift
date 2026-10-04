@@ -163,6 +163,14 @@ enum StreamMixerChecks {
     _ = fixture.withUnsafeBufferPointer { ls_output_write(muteCore, $0.baseAddress, UInt32(frames)) }
     let muted = StreamE2E.readMix(muteCore, frames: frames).samples
     let mutePeak = muted.dropFirst(settle * 2).map { abs($0) }.max() ?? 0
+    // Meters are pre-fader: all-stem mute is silent but still shows the bass.
+    var meters: [Float] = [0, 0, 0, 0], cleared: [Float] = [0, 0, 0, 0]
+    ls_take_meters(muteCore, &meters)
+    ls_take_meters(muteCore, &cleared)
+    let bassSourcePeak = fixture.enumerated().filter { $0.offset % 11 == 4 || $0.offset % 11 == 5 }
+      .map { abs($0.element) }.max() ?? 0
+    let meterPass = bassSourcePeak > 0 && meters[2] > 0.5 * bassSourcePeak
+      && meters[2] <= bassSourcePeak + 1e-6 && cleared.allSatisfy { $0 == 0 }
 
     guard let toggleCore = ls_create(Double(rate), Double(rate)) else {
       throw StemError("Cannot allocate stem toggle controls core")
@@ -227,7 +235,7 @@ enum StreamMixerChecks {
       && bassRelative <= 1e-5 && mutePeak <= 1e-6
       && offOriginalError <= 1e-6 && toggleUnderruns == 0
       && limiterViolations == 0 && toggleStemPeak <= max(0.98, sourcePeak) + 1e-6
-      && onBassError <= 1e-6
+      && onBassError <= 1e-6 && meterPass
     return [
       "checked": true, "pass": pass,
       "neutral_relative_error": neutralRelative, "neutral_max_abs_error": neutralMax,
@@ -237,6 +245,7 @@ enum StreamMixerChecks {
       "raw_stem_sum_snr_db": snr, "toggle_on_bass_max_abs_error": onBassError, "toggle_stem_peak": toggleStemPeak,
       "source_peak": sourcePeak, "frames": frames,
       "persistent_controls": true, "bass_solo": true, "all_stem_mute": true,
+      "premute_bass_meter": meters[2], "bass_source_peak": bassSourcePeak, "meter_pass": meterPass,
     ]
   }
 

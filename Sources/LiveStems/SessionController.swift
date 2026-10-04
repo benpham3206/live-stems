@@ -247,6 +247,14 @@ final class SessionController {
       self.applyControls()
     }
   }
+  /// Pre-fader stem peaks since the last call; zeros when no session runs.
+  func takeMeters(_ done: @escaping ([Float]) -> Void) {
+    queue.async {
+      var peaks: [Float] = [0, 0, 0, 0]
+      if let core = self.audio?.core { ls_take_meters(core, &peaks) }
+      DispatchQueue.main.async { done(peaks) }
+    }
+  }
   private func mixStatus(_ pipeline: StemPipeline) -> String {
     if stemsSelected || pipeline.paused { return pipeline.statusText }
     return "Original mix"

@@ -22,6 +22,8 @@ struct LSCore {
     uint64_t render_epoch, applied_flush;
     float last_left, last_right, envelope;
     int priming, fade_out;
+    float meter_hold[4];
+    atomic_uint meter[4];
 };
 static void init_ring(Ring *r, uint32_t n, uint32_t ch) { r->capacity=n; r->channels=ch; r->data=calloc((size_t)n*ch,sizeof(float)); }
 LSCore *ls_create(double cr, double rr) {
@@ -59,6 +61,16 @@ static void publish_trace(LSCore *c){
     uint32_t bits;memcpy(&bits,&c->render_trace.stem_weight,4);atomic_store(&c->rendered_weight,bits);
     atomic_fetch_add(&c->trace_sequence,1);
 }
+// Pre-fader stem peaks since the last take. Non-negative float bits sort like
+// unsigned integers, so a CAS max needs no lock on the render thread.
+static void publish_meters(LSCore *c){
+    for(int s=0;s<4;s++){
+        uint32_t bits;memcpy(&bits,&c->meter_hold[s],4);c->meter_hold[s]=0;
+        uint32_t seen=atomic_load(&c->meter[s]);
+        while(bits>seen && !atomic_compare_exchange_weak(&c->meter[s],&seen,bits)){}
+    }
+}
+void ls_take_meters(LSCore *c,float *peaks){for(int s=0;s<4;s++){uint32_t bits=atomic_exchange(&c->meter[s],0);memcpy(&peaks[s],&bits,4);}}
 int ls_render_snapshot(LSCore *c,LSRenderSnapshot *out){
     for(int attempt=0;attempt<4;attempt++){
         uint64_t before=atomic_load(&c->trace_sequence);if(before&1)continue;
@@ -121,6 +133,10 @@ static int next_frame(LSCore *c,float *left,float *right){
     // Assign mixture residual to Other. Neutral controls reconstruct Original;
     // a solo remains the selected stem, and all-stem mute remains silence.
     *left+=(f[8]-raw_left)*c->smooth[3];*right+=(f[9]-raw_right)*c->smooth[3];
+    for(int s=0;s<4;s++){
+        float l=f[s*2],r=f[s*2+1];if(s==3){l+=f[8]-raw_left;r+=f[9]-raw_right;}
+        c->meter_hold[s]=fmaxf(c->meter_hold[s],fmaxf(fabsf(l),fabsf(r))*weight);
+    }
     if(neutral){*left=f[8];*right=f[9];}
     float ceiling=fmaxf(.98f,fmaxf(fabsf(f[8]),fabsf(f[9])));
     float peak=fmaxf(fabsf(*left),fabsf(*right));if(peak>ceiling){float gain=ceiling/peak;*left*=gain;*right*=gain;}
@@ -130,9 +146,9 @@ static int next_frame(LSCore *c,float *left,float *right){
     c->render_trace.source_frame=c->output_frames[pos%r->capacity];c->render_trace.capture_nanos=c->output_times[pos%r->capacity];
     atomic_store(&r->read,pos+1);atomic_fetch_add(&c->played,1);return 1;
 }
-uint32_t ls_read_mix(LSCore *c,float *out,uint32_t n){uint32_t got=0;uint64_t epoch=atomic_load(&c->epoch);for(uint32_t i=0;i<n;i++){float l=0,r=0;if(epoch==atomic_load(&c->epoch))got+=next_frame(c,&l,&r);out[i*2]=l;out[i*2+1]=r;}publish_trace(c);return got;}
+uint32_t ls_read_mix(LSCore *c,float *out,uint32_t n){uint32_t got=0;uint64_t epoch=atomic_load(&c->epoch);for(uint32_t i=0;i<n;i++){float l=0,r=0;if(epoch==atomic_load(&c->epoch))got+=next_frame(c,&l,&r);out[i*2]=l;out[i*2+1]=r;}publish_trace(c);publish_meters(c);return got;}
 void ls_render(LSCore *c,uint32_t n,AudioBufferList *out){ls_render_timed(c,n,out,NULL);}
-void ls_render_timed(LSCore *c,uint32_t n,AudioBufferList *out,const AudioTimeStamp *time){uint64_t host=(time && (time->mFlags & kAudioTimeStampHostTimeValid))?AudioConvertHostTimeToNanos(time->mHostTime):0;uint64_t epoch=atomic_load(&c->epoch);for(uint32_t i=0;i<n;i++){float l=0,r=0;if(epoch==atomic_load(&c->epoch) && next_frame(c,&l,&r) && host)c->render_trace.render_nanos=host+(uint64_t)(i*1e9/c->rate);if(out->mNumberBuffers==1){float *p=out->mBuffers[0].mData;if(p){p[i*2]=l;p[i*2+1]=r;}}else if(out->mNumberBuffers>=2){float *a=out->mBuffers[0].mData,*b=out->mBuffers[1].mData;if(a)a[i]=l;if(b)b[i]=r;}}publish_trace(c);}
+void ls_render_timed(LSCore *c,uint32_t n,AudioBufferList *out,const AudioTimeStamp *time){uint64_t host=(time && (time->mFlags & kAudioTimeStampHostTimeValid))?AudioConvertHostTimeToNanos(time->mHostTime):0;uint64_t epoch=atomic_load(&c->epoch);for(uint32_t i=0;i<n;i++){float l=0,r=0;if(epoch==atomic_load(&c->epoch) && next_frame(c,&l,&r) && host)c->render_trace.render_nanos=host+(uint64_t)(i*1e9/c->rate);if(out->mNumberBuffers==1){float *p=out->mBuffers[0].mData;if(p){p[i*2]=l;p[i*2+1]=r;}}else if(out->mNumberBuffers>=2){float *a=out->mBuffers[0].mData,*b=out->mBuffers[1].mData;if(a)a[i]=l;if(b)b[i]=r;}}publish_trace(c);publish_meters(c);}
 OSStatus ls_capture_callback(AudioDeviceID d,const AudioTimeStamp *now,const AudioBufferList *in,const AudioTimeStamp *it,AudioBufferList *out,const AudioTimeStamp *ot,void *context){
     LSCore *c=context;if(!c || !in || !in->mNumberBuffers)return noErr;uint64_t epoch=atomic_load(&c->epoch);Ring *r=&c->capture;
     int planar=in->mNumberBuffers==2 && in->mBuffers[0].mNumberChannels==1 && in->mBuffers[1].mNumberChannels==1;

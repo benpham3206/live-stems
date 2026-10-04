@@ -93,7 +93,10 @@ copy in `/Applications`, then `~/Applications`, then the old workspace path.
 Open `/Applications/Live Stems.app`, then
 select Enable live stems. The controls panel remains available across Spaces.
 It is shown when capture becomes ready, unless you closed it. Use the four
-volume, Mute, and Solo controls.
+volume, Mute, and Solo controls. Each stem row has M and S buttons and a small
+waveform. The waveform shows the stem's level before its fader, so a muted stem
+still shows its content, dimmed. It is flat while Original plays. The All
+stems M button mutes or unmutes all four stems.
 
 The app does not change drivers, the default output, Logic settings, TCC data,
 or system protection. The Spotify reader uses background Apple Events. The

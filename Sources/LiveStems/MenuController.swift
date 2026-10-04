@@ -8,7 +8,7 @@ final class MenuController: NSObject, NSWindowDelegate {
   private let activatesOnStatusClick: Bool
   private let terminate: () -> Void
   private let window = NSWindow(
-    contentRect: NSRect(x: 0, y: 0, width: 330, height: 430),
+    contentRect: NSRect(x: 0, y: 0, width: 330, height: 460),
     styleMask: [.titled, .closable], backing: .buffered,
     defer: false)
   private let windowLog = Logger(subsystem: "com.benpham.livestems", category: "Windowing")
@@ -17,6 +17,11 @@ final class MenuController: NSObject, NSWindowDelegate {
     startButton = NSButton(title: "Enable live stems", target: nil, action: nil),
     liveButton = NSButton(title: "Return to live Spotify", target: nil, action: nil)
   private var active = false, panelRequested = true, controls = StemControls()
+  private var muteButtons: [NSButton] = [], waveforms: [StemWaveform] = []
+  private var muteAllButton: NSButton!
+  private var meterTimer: Timer?
+  private static let muteColor = NSColor(srgbRed: 0.29, green: 0.62, blue: 1, alpha: 1)
+  private static let soloColor = NSColor(srgbRed: 1, green: 0.82, blue: 0.2, alpha: 1)
   override convenience init() {
     self.init(activateOnStatusClick: true)
   }
@@ -30,23 +35,29 @@ final class MenuController: NSObject, NSWindowDelegate {
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     window.delegate = self
     window.level = .floating
-    let content = NSView(frame: NSRect(x: 0, y: 0, width: 330, height: 430))
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 330, height: 460))
     window.contentView = content
-    statusLabel.frame = NSRect(x: 16, y: 397, width: 298, height: 20)
+    statusLabel.frame = NSRect(x: 16, y: 427, width: 298, height: 20)
     content.addSubview(statusLabel)
-    outputLabel.frame = NSRect(x: 16, y: 375, width: 298, height: 18)
+    outputLabel.frame = NSRect(x: 16, y: 405, width: 298, height: 18)
     outputLabel.font = .systemFont(ofSize: 11)
     content.addSubview(outputLabel)
-    startButton.frame = NSRect(x: 12, y: 337, width: 306, height: 30)
+    startButton.frame = NSRect(x: 12, y: 367, width: 306, height: 30)
     startButton.target = self
     startButton.action = #selector(toggle)
     startButton.bezelStyle = .rounded
     content.addSubview(startButton)
+    let stemColors: [NSColor] = [.systemPink, .systemOrange, .systemPurple, .systemGreen]
     for (index, name) in ["Vocals", "Drums", "Bass", "Other"].enumerated() {
-      let row = NSView(frame: NSRect(x: 0, y: 273 - index * 64, width: 330, height: 64))
+      let row = NSView(frame: NSRect(x: 0, y: 303 - index * 64, width: 330, height: 64))
       let label = NSTextField(labelWithString: name)
-      label.frame = NSRect(x: 16, y: 38, width: 100, height: 20)
+      label.frame = NSRect(x: 16, y: 38, width: 64, height: 20)
       row.addSubview(label)
+      let waveform = StemWaveform(color: stemColors[index])
+      waveform.frame = NSRect(x: 84, y: 36, width: 170, height: 22)
+      waveform.setAccessibilityLabel(name + " waveform")
+      row.addSubview(waveform)
+      waveforms.append(waveform)
       let slider = NSSlider(
         value: 1, minValue: 0, maxValue: 1, target: self, action: #selector(slide(_:)))
       slider.tag = index
@@ -55,14 +66,27 @@ final class MenuController: NSObject, NSWindowDelegate {
       slider.setAccessibilityLabel(name + " volume")
       row.addSubview(slider)
       for (offset, title) in ["Mute", "Solo"].enumerated() {
-        let button = NSButton(checkboxWithTitle: title, target: self, action: #selector(check(_:)))
+        let button = LogicToggle(
+          letter: String(title.prefix(1)), lit: offset == 0 ? Self.muteColor : Self.soloColor,
+          target: self, action: #selector(check(_:)))
         button.tag = index + offset * 4
-        button.frame = NSRect(x: 166 + offset * 74, y: 36, width: 74, height: 22)
+        button.frame = NSRect(x: 262 + offset * 28, y: 36, width: 24, height: 22)
         button.setAccessibilityLabel(name + " " + title)
+        button.toolTip = title
         row.addSubview(button)
+        if offset == 0 { muteButtons.append(button) }
       }
       content.addSubview(row)
     }
+    let allLabel = NSTextField(labelWithString: "All stems")
+    allLabel.frame = NSRect(x: 16, y: 85, width: 100, height: 20)
+    content.addSubview(allLabel)
+    muteAllButton = LogicToggle(
+      letter: "M", lit: Self.muteColor, target: self, action: #selector(muteAll(_:)))
+    muteAllButton.frame = NSRect(x: 262, y: 84, width: 24, height: 22)
+    muteAllButton.setAccessibilityLabel("Mute all")
+    muteAllButton.toolTip = "Mute all stems"
+    content.addSubview(muteAllButton)
     liveButton.frame = NSRect(x: 12, y: 42, width: 306, height: 30)
     liveButton.bezelStyle = .rounded
     liveButton.target = self
@@ -85,6 +109,14 @@ final class MenuController: NSObject, NSWindowDelegate {
     session.onStatus = { [weak self] text, output, enabled, stems in
       self?.applyStatus(text: text, output: output, enabled: enabled, stems: stems)
     }
+    // 30 Hz meter pull; it reads nothing while the controls are hidden.
+    meterTimer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+      guard let self, self.window.isVisible else { return }
+      self.session.takeMeters { peaks in
+        for (waveform, peak) in zip(self.waveforms, peaks) { waveform.push(peak) }
+      }
+    }
+    RunLoop.main.add(meterTimer!, forMode: .common)
     // The first launch shows the controls without making the app frontmost.
     presentWindow(reason: "launch", userInitiated: false)
   }
@@ -144,6 +176,19 @@ final class MenuController: NSObject, NSWindowDelegate {
       if sender.state == .on { controls.mute |= mask } else { controls.mute &= ~mask }
     } else {
       if sender.state == .on { controls.solo |= mask } else { controls.solo &= ~mask }
+    }
+    applyControls()
+  }
+  @objc private func muteAll(_ sender: NSButton) {
+    controls.mute = sender.state == .on ? 0b1111 : 0
+    for button in muteButtons { button.state = sender.state }
+    applyControls()
+  }
+  private func applyControls() {
+    muteAllButton.state = controls.mute == 0b1111 ? .on : .off
+    for (index, waveform) in waveforms.enumerated() {
+      let bit: UInt32 = 1 << UInt32(index)
+      waveform.dimmed = controls.mute & bit != 0 || (controls.solo != 0 && controls.solo & bit == 0)
     }
     session.setControls(controls)
   }
