@@ -10,7 +10,8 @@ Live Stems sits in your menu bar. Its panel has one row per stem, like a Logic P
 - **M** (mute, blue) and **S** (solo, yellow) buttons,
 - a small **waveform** that shows what that stem is doing right now.
 
-An **All stems M** button mutes everything, and **Reset mix** puts every control back to normal.
+The **All stems** row has an **M** that mutes everything and an **S** that lights up while anything
+is soloed; click it to clear every solo at once, like Logic. **Reset mix** puts every control back to normal.
 
 It uses [Demucs](https://github.com/facebookresearch/demucs), Meta's music separation model, running
 on your Mac's GPU through [demucs-mlx](https://github.com/ssmall256/demucs-mlx). Nothing is uploaded.

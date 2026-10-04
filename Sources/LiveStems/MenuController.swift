@@ -18,7 +18,7 @@ final class MenuController: NSObject, NSWindowDelegate {
   private var active = false, panelRequested = true, controls = StemControls()
   private var muteButtons: [NSButton] = [], soloButtons: [NSButton] = [], sliders: [NSSlider] = []
   private var waveforms: [StemWaveform] = []
-  private var muteAllButton: NSButton!
+  private var muteAllButton: NSButton!, clearSoloButton: NSButton!
   private var meterTimer: Timer?
   private static let muteColor = NSColor(srgbRed: 0.29, green: 0.62, blue: 1, alpha: 1)
   private static let soloColor = NSColor(srgbRed: 1, green: 0.82, blue: 0.2, alpha: 1)
@@ -88,6 +88,13 @@ final class MenuController: NSObject, NSWindowDelegate {
     muteAllButton.setAccessibilityLabel("Mute all")
     muteAllButton.toolTip = "Mute all stems"
     content.addSubview(muteAllButton)
+    // Logic-style global solo: lit while any stem is soloed; a click clears them all.
+    clearSoloButton = LogicToggle(
+      letter: "S", lit: Self.soloColor, target: self, action: #selector(clearSolos))
+    clearSoloButton.frame = NSRect(x: 290, y: 50, width: 24, height: 22)
+    clearSoloButton.setAccessibilityLabel("Clear all solos")
+    clearSoloButton.toolTip = "Clear all solos"
+    content.addSubview(clearSoloButton)
     let quit = NSButton(title: "Quit Live Stems", target: self, action: #selector(quitApp))
     quit.frame = NSRect(x: 12, y: 8, width: 306, height: 30)
     quit.bezelStyle = .rounded
@@ -184,8 +191,14 @@ final class MenuController: NSObject, NSWindowDelegate {
     for button in muteButtons { button.state = sender.state }
     applyControls()
   }
+  @objc private func clearSolos() {
+    controls.solo = 0
+    for button in soloButtons { button.state = .off }
+    applyControls()
+  }
   private func applyControls() {
     muteAllButton.state = controls.mute == 0b1111 ? .on : .off
+    clearSoloButton.state = controls.solo != 0 ? .on : .off
     for (waveform, gain) in zip(waveforms, controls.effectiveGains) { waveform.dimmed = gain == 0 }
     session.setControls(controls)
   }

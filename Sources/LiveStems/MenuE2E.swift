@@ -141,6 +141,18 @@ enum MenuE2E {
       ])
     }
 
+    let bassSolo = try control(named: "Bass Solo", in: window)
+    bassSolo.performClick(nil)
+    pump()
+    let clearSolo = try control(named: "Clear all solos", in: window)
+    try require(clearSolo.state == .on, "Global solo did not light while stems were soloed")
+    clearSolo.performClick(nil)
+    pump()
+    let vocalsSolo = try control(named: "Vocals Solo", in: window)
+    try require(vocalsSolo.state == .off && bassSolo.state == .off && clearSolo.state == .off,
+      "Global solo did not clear every solo")
+    checks.append(["name": "global_solo_clears", "cleared": true])
+
     window.performClose(nil)
     pump()
     try require(!window.isVisible, "Second close action did not hide the controls window")
