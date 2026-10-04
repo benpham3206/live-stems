@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import select
 import struct
 import subprocess
@@ -229,6 +230,26 @@ def process_identity(pid, expected):
     }
 
 
+def gpu_utilization():
+    """Whole-GPU Device Utilization % from IOKit; not per process. None if unavailable."""
+    # ponytail: 5 s point samples miss sub-second peaks; powermetrics (needs root) sees peaks.
+    output = subprocess.run(['ioreg', '-r', '-d', '1', '-c', 'IOAccelerator'],
+                            capture_output=True, text=True).stdout
+    match = re.search(r'"Device Utilization %"=(\d+)', output)
+    return int(match.group(1)) if match else None
+
+
+def load_summary(records):
+    def stats(values):
+        values = [value for value in values if value is not None]
+        return {'mean': sum(values) / len(values), 'max': max(values)} if values else None
+    return {
+        'gpu_device_utilization_percent': stats(r['gpu_utilization_percent'] for r in records),
+        'app_cpu_percent': stats(r['resources'][0]['cpu_percent'] for r in records),
+        'worker_cpu_percent': stats(r['resources'][1]['cpu_percent'] for r in records),
+    }
+
+
 def sustained_stage(duration):
     """Observe the running native session; this does not replace listening."""
     records = []
@@ -354,6 +375,7 @@ def sustained_stage(duration):
                         f'{role} {metric} {values[metric]} exceeds sampled limit {limit}'
             records.append({
                 'elapsed': now - began, 'state': state, 'resources': resources,
+                'gpu_utilization_percent': gpu_utilization(),
             })
             last = state
             print(f'Live capture {round(now - began)} / {duration}s', flush=True)
@@ -404,7 +426,8 @@ def sustained_stage(duration):
             'audibility': 'requires human listening',
             'source_isolation': 'requires a separate non-Spotify sound check',
             'sampled_resource_limits': RESOURCE_LIMITS,
-            'gpu_usage': 'not measured',
+            'load': load_summary(records),
+            'load_note': 'GPU: system-wide 5 s point samples. CPU: ps per process, 100 = one core.',
         }
     except Exception as error:
         report = {
@@ -423,6 +446,7 @@ def sustained_stage(duration):
                                        if stable_samples else None),
             'unexpected_underruns': unexpected_underruns,
             'allowed_underruns': allowed_underruns,
+            'load': load_summary(records),
             'samples': records,
         }
         raise
