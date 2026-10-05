@@ -98,7 +98,10 @@ captured playback, Original and stems use the same source frames.
 
 Capture history is bounded to three seconds and compacts to two seconds. Ready
 stem data has an 8 MiB bound. No song library or long track cache is retained.
-The model allocation cache has a 1 GiB bound. Live process memory and inference
+The model allocation cache has a 512 MiB bound; 1 GiB measured no faster
+(p50 about 60 ms either way) and used 0.45 GB more. After 2 s without requests
+(the model sleeps), the worker empties the cache: about 0.85 GB idle instead of
+1.5 GB, and the first job after a sleep takes about 77 ms instead of 60. Live process memory and inference
 deadlines remain acceptance checks. Only one app instance can acquire capture.
 Metadata is used to invalidate context on seeks and track changes. The captured
 sample clock remains the authority for audio alignment.

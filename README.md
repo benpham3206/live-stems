@@ -26,7 +26,7 @@ Audio never leaves your Mac and is never saved to disk.
 - The **Spotify** desktop app.
 - **Python 3.12** (for example `brew install python@3.12`).
 - Apple's **Command Line Tools**, to build the app (`xcode-select --install` if you don't have them).
-- About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB), and **1–2 GB of memory** while it runs.
+- About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB), and about **1.5 GB of memory** while stems play (**under 1 GB** while the model sleeps).
 
 ## Install
 

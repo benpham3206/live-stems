@@ -5,6 +5,7 @@ from pathlib import Path
 import struct
 import sys
 import os
+import select
 import threading
 import time
 import logging
@@ -58,9 +59,9 @@ def main():
         item.eval();item.use_train_segment=False
         set_attention_dtype(item,mx.float32);mx.eval(item.parameters())
     # Keep the repeatedly used fixed-shape scratch allocations. A 128 MiB
-    # cache churns allocations against roughly 800 MiB of persistent weights.
-    # This cache stays bounded; live RSS and job deadlines are acceptance gates.
-    mx.set_cache_limit(1024*1024*1024)
+    # cache churns allocations against roughly 800 MiB of persistent weights;
+    # 512 MiB measured no slower than 1 GiB and frees about 0.5 GB.
+    mx.set_cache_limit(512*1024*1024)
     def separate(samples):
         started=time.monotonic()
         mixture=mx.array(samples.T)
@@ -84,8 +85,15 @@ def main():
     for _ in range(3):separate(warm)
     send(1,json.dumps({'sources':SOURCES,'samplerate':44100,'window_frames':44100,
                        'warmup_seconds':time.monotonic()-began}).encode())
+    idle_cleared=False
     while True:
-        h=HEADER.unpack(exact(48))
+        # The model sleeps on a neutral mix or a pause: no requests come. After
+        # 2 s idle, return the scratch cache; the next job reallocates it.
+        if not idle_cleared and not select.select([sys.stdin.buffer],[],[],2.0)[0]:
+            mx.clear_cache();idle_cleared=True
+            if args.trace_dir:trace.info(json.dumps({'event':'idle-clear','uptime':time.monotonic(),
+                                                      'gpu_cache_bytes':mx.get_cache_memory()}))
+        h=HEADER.unpack(exact(48));idle_cleared=False
         magic,version,kind,generation,job,start,rate,frames,channels,stems,size=h
         if magic!=b'LSTM' or version!=1 or kind not in [2,5] or size>16*1024*1024:raise ValueError('Invalid packet header')
         if kind==5:
