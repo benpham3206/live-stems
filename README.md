@@ -72,17 +72,37 @@ music.
 
 - A Mac with **Apple Silicon** running **macOS 26 or newer**. Built and tested on an **M3 Max**. The model
   must finish each job in under 0.1 s; on slower chips, stems may drop out to the plain song more often.
-- **Python 3.12** (for example `brew install python@3.12`).
+- **Python 3.12**: the installer finds it, or installs it with Homebrew.
 - Apple's **Command Line Tools**, to build the app (`xcode-select --install` if you don't have them).
 - About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB),
   and about **1.5 GB of memory** while stems play (**under 1 GB** while the model sleeps).
 
 ## Install
 
-Live Stems is built on your Mac from this source. Most of the time goes to downloads.
-All commands go in **Terminal** (press ⌘-Space and type "Terminal").
+Open **Terminal** (press ⌘-Space and type "Terminal"), paste this line, and press Return:
 
-### 1. Get the code
+```sh
+curl -fsSL https://raw.githubusercontent.com/benpham3206/live-stems/main/install.sh | zsh
+```
+
+It takes a few minutes, mostly downloads, and it is safe to run again: finished steps are skipped,
+and running it later updates Live Stems. Add `-s -- --dry-run` after `zsh` to see the steps without
+running them. Here is what it does:
+
+1. **Checks your Mac:** Apple Silicon, macOS 26 or newer, Apple's Command Line Tools.
+2. **Finds Python 3.12**, or installs it with Homebrew if you have Homebrew.
+3. **Downloads the source** to `~/LiveStems`.
+4. **Sets up the separation library and the model** in `~/LiveStems/work` (about 1.5 GB, once).
+5. **Creates a signing certificate**, "Live Stems Local", in your login keychain. macOS remembers the
+   audio permission only for an app with a stable signature, so this saves you from re-approving it
+   after every update.
+6. **Builds the app**, puts it in `/Applications`, and opens it. When macOS asks whether `codesign`
+   may use your certificate, enter your Mac password and click **Always Allow**.
+
+<details>
+<summary><b>Install by hand instead</b></summary>
+
+#### 1. Get the code
 
 The app expects this folder layout, so clone it exactly like this:
 
@@ -94,7 +114,7 @@ cd ~/LiveStems
 
 Every command below runs from `~/LiveStems`.
 
-### 2. Set up Python and the model
+#### 2. Set up Python and the model
 
 ```sh
 python3.12 -m venv work/stems-venv
@@ -105,7 +125,7 @@ work/stems-venv/bin/python -m demucs_mlx.mlx_convert htdemucs_ft --output-dir wo
 The last command downloads Meta's `htdemucs_ft` model (four fine-tuned models, one per stem) and
 converts it for your GPU.
 
-### 3. Make a signing certificate (one time)
+#### 3. Make a signing certificate (one time)
 
 macOS asks for permission to capture app audio. It only remembers your answer if every build of the
 app has the same signature, so the app is signed with a certificate of your own:
@@ -122,7 +142,7 @@ The file must hold one 40-character ID. If the build later says *"A stable signi
 required"*, check this file. If you already have an **Apple Development** certificate from Xcode, you
 can use its ID instead (`security find-identity -p codesigning` lists them).
 
-### 4. Build and open it
+#### 4. Build and open it
 
 ```sh
 bash outputs/live-stems-source/script/build_and_run.sh
@@ -131,6 +151,8 @@ bash outputs/live-stems-source/script/build_and_run.sh
 This builds the app, signs it, puts it in `/Applications/Live Stems.app` and opens it. When macOS asks
 whether `codesign` may use your certificate, enter your Mac password and click **Always Allow**.
 Run the same command again to update after `git pull`. The previous version is kept in `work/`.
+
+</details>
 
 ## First launch
 
@@ -170,8 +192,8 @@ and switching headphones or speakers keeps Live Stems running.
 
 | Problem | Try this |
 |---|---|
-| Build says *"A stable signing certificate is required"* | Redo [step 3](#3-make-a-signing-certificate-one-time). The ID file must hold one 40-character ID. |
-| Build says *"The local Python environment is missing"* | Redo [step 2](#2-set-up-python-and-the-model). The folder layout from step 1 must match exactly. |
+| Build says *"A stable signing certificate is required"* | Run the install line again; it recreates the certificate if it is missing. |
+| Build says *"The local Python environment is missing"* | Run the install line again. If you installed by hand, the folder layout from step 1 must match exactly. |
 | macOS asks for audio permission after every update | The app's signature changed. Check that `work/live-stems-signing-identity.txt` still names your certificate. |
 | No stems from a browser | Pick the browser itself in the source menu (not a tab). Live Stems also captures the browser's audio helper processes. |
 | Status says *"… capture silent · direct playback restored"* | Spotify was silent for 10 seconds after Live Stems started. Play something, then change any control. |

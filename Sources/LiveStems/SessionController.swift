@@ -22,6 +22,9 @@ final class SessionController {
   private var lastTrace = 0.0
   private var quitCompletion: (() -> Void)?
   private var quitVersion: UInt64 = 0, quitStarted = 0.0
+  // A running session is real-time work: without this, App Nap can coalesce the
+  // 10 ms tick when no audio plays (before takeover, between sessions).
+  private var activity: NSObjectProtocol?
   var onReady: (() -> Void)?
   var onStatus: ((String, String, Bool, Bool) -> Void)?
   init(traceDirectory: URL = LocalSettings.evidence, spotifyState: SpotifyState = SpotifyState(),
@@ -52,6 +55,8 @@ final class SessionController {
     queue.async {
       guard !self.enabled else { return }
       self.enabled = true
+      self.activity = ProcessInfo.processInfo.beginActivity(
+        options: [.userInitiated, .latencyCritical], reason: "Live Stems real-time audio")
       self.stemsSelected = true
       self.token += 1
       let token = self.token
@@ -378,6 +383,8 @@ final class SessionController {
     quitCompletion = nil
     trace.record(TraceRecord(event: "stop", generation: token, sourceFrame: pipeline?.outputPosition, reason: message))
     enabled = false
+    if let activity { ProcessInfo.processInfo.endActivity(activity) }
+    activity = nil
     token += 1
     timer?.cancel()
     timer = nil

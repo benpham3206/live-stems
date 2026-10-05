@@ -106,6 +106,15 @@ enum NativeE2E {
       let outputIndex = args.firstIndex(of: "--output"), outputIndex + 1 < args.count
     else { throw StemError("E2E needs --e2e <stream|recovery> --output <directory>") }
     let stage = args[stageIndex + 1]
+    // Live stages wait on the run loop between sessions; App Nap must not stall them.
+    let activity = ProcessInfo.processInfo.beginActivity(
+      options: [.userInitiated, .latencyCritical], reason: "Live Stems E2E")
+    defer { ProcessInfo.processInfo.endActivity(activity) }
+    // A stuck stage must fail loudly, not hang: no stage needs ten minutes.
+    DispatchQueue.global().asyncAfter(deadline: .now() + 600) {
+      fputs("E2E failed: watchdog stopped \(stage) after 10 minutes\n", stderr)
+      exit(3)
+    }
     let out = URL(fileURLWithPath: args[outputIndex + 1])
     try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
     switch stage {
@@ -133,6 +142,10 @@ enum NativeE2E {
       try StreamE2E.run(out)
     case "recovery":
       try recovery(out)
+    case "spam-live":
+      try SpamE2E.run(out)
+    case "spam":
+      try MenuE2E.spam(out)
     case "snapshot":
       try MenuE2E.snapshot(out)
     case "transitions":

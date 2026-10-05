@@ -303,7 +303,7 @@ final class StemPipeline {
         samples: Array(result.samples[at..<at + (job.window.upperBound - tailLo) * 8]))
     } else { provisional = nil }
     acceptedResults += 1
-    gate.result(fullyOnTime: coreLo == job.core.lowerBound)
+    if coreLo == job.core.lowerBound { gate.onTimeResult() } else { gate.partialResult() }
     onTrace?(TraceRecord(event: "accepted-result", generation: generation,
       sourceFrame: coreLo, sourceEnd: job.core.upperBound,
       windowStart: result.range.start, deadlineSlackSeconds: Double(job.core.lowerBound - outputPosition) / 44100))
@@ -329,13 +329,16 @@ final class StemPipeline {
         usedProvisional = false
       } else if let tail = provisional, tail.range.contains(frame) {
         // A late result falls back to the previous tail estimate, never to
-        // the full mix. The next result replaces these frames on arrival.
+        // the full mix. The next result replaces these frames on arrival. If
+        // it still has not come with fadeOut frames of tail left, the gap is
+        // certain: start fading now, while there is stem data to fade with.
+        if gate.isOpen, tail.range.upperBound - frame <= gate.fadeOut { gate.miss(at: frame) }
         blend(toward: min(1, max(Float(frame - tail.range.lowerBound + 1) / Float(fade), weight)))
         let offset = (frame - tail.range.lowerBound) * 8
         for channel in 0..<8 { samples[out + channel] = tail.samples[offset + channel] }
         usedProvisional = true
       } else {
-        if weight > 0 { gate.gap(at: frame) }
+        if weight > 0 { gate.miss(at: frame) }
         weight = 0
         usedProvisional = false
       }
