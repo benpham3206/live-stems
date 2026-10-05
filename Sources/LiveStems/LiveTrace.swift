@@ -34,6 +34,7 @@ struct TraceRecord: Codable {
   var gains: [Float]? = nil
   var droppedRecords: Int? = nil
   var outputBufferFrames: UInt32? = nil
+  var reason: String? = nil  // why a session stopped; app messages only, never track data
 }
 
 // The audio callback only updates atomic values. Encoding and file access

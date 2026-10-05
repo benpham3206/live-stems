@@ -357,7 +357,7 @@ enum StreamE2E {
       }
       let boundary = previousState.map { old in
         old.track.id != state.track.id || old.isPlaying != state.isPlaying
-          || abs(old.position - state.position) > 0.35
+          || abs(old.position - state.position) > 1.0
       } ?? true
       if boundary { probe.contextResetWalls.append(currentWall) }
       pipeline.observe(

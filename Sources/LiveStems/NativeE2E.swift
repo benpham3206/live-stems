@@ -135,11 +135,17 @@ enum NativeE2E {
       try recovery(out)
     case "snapshot":
       try MenuE2E.snapshot(out)
-    case "ease":
-      let report = try StreamMixerChecks.ease()
+    case "transitions":
+      var runs = [[String: Any]]()
+      for seed in UInt64(1)...25 { runs.append(try StreamMixerChecks.transitions(seed: seed)) }
+      try JSONSerialization.data(withJSONObject: runs, options: [.prettyPrinted, .sortedKeys])
+        .write(to: out.appendingPathComponent("transitions.json"))
+      print("PASS transitions · 25 seeds × 75 s of random skips, seeks, pauses, sleeps, late results")
+    case "flutter":
+      let report = try StreamMixerChecks.flutter()
       try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
-        .write(to: out.appendingPathComponent("ease.json"))
-      print("PASS ease · \(report)")
+        .write(to: out.appendingPathComponent("flutter.json"))
+      print("PASS flutter · \(report)")
     case "rest":
       let report = try StreamMixerChecks.resting()
       try JSONSerialization.data(withJSONObject: report).write(to: out.appendingPathComponent("rest.json"))

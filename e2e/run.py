@@ -291,8 +291,7 @@ def sustained_stage(duration):
                 'Model is resting (neutral mix or Original). Move any slider or use Mute/Solo, then rerun.'
             now = time.monotonic()
             assert now - state['observedUptime'] < 5, 'Native diagnostics stopped'
-            if last is None or state.get('easing', False):
-                # The startup ease grows the delay on purpose; it is not steady yet.
+            if last is None:
                 stable_until = max(stable_until, now + 1.5)
             else:
                 if state.get('paused', False) or last.get('paused', False):

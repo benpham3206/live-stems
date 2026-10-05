@@ -23,11 +23,18 @@ final class StemPipeline {
   private(set) var steadyProvisionalFrames = 0
   // The model rests while the mix equals Original. Resting frames are not steady stem frames.
   private(set) var resting = false
-  // Startup ease: hand off at the live edge with a short cushion, so nothing the
-  // listener just heard repeats. Playback then runs slightly slow (pitch kept)
-  // until the delay reaches lagFrames. Calibration knobs: cushion and depth.
-  let easeCushionFrames = 1323, easePrimeFrames = 662, easeMaxSlowdown: Float = 0.06
-  private(set) var easing = false, easeRate: Float = 1
+  // Until takeover the listener hears Spotify directly and nothing is queued.
+  // A pause, skip, or seek is a break where the 0.3 s shift cannot be heard.
+  private(set) var outputLive = true, breakPending = false
+  /// The live session holds output for a break; fixtures keep committing at once.
+  func holdForBreak() { outputLive = false; breakPending = false }
+  // Stems (re)enter after on-time results, then fade in over entryFade. One
+  // isolated gap, a skip, or a wake needs one on-time result, so a single miss
+  // recovers fast. A second gap within 2 s means the model is struggling: then
+  // entryStreak results in a row are needed, so stems stay on the stem-free mix
+  // instead of flickering against Original ten times a second.
+  let entryFade = 8820, entryStreak = 3
+  private var gated = true, entering = false, onTimeStreak = 0, neededStreak = 1, lastGapFrame = Int.min / 2
   var timings = [Double]()
   private var history = [Float](), ready = [Chunk]()
   private var provisional: Chunk?
@@ -121,10 +128,16 @@ final class StemPipeline {
         cut = true
         natural = old.isPlaying && value.isPlaying && old.duration > 0
           && abs(expected - old.duration) < 1.2 && value.position < 1.5
-      } else if abs(value.position - expected) > 0.35 { cut = true }
+      } else if abs(value.position - expected) > 1.0 {
+        // An AppleScript read samples the position at an unknown point inside a
+        // call that can take ~0.5 s, so smaller drift is read noise. A false seek
+        // flushes audible playback; a missed sub-second seek costs only context.
+        cut = true
+      }
     }
     let changedPause = paused != !value.isPlaying
     paused = !value.isPlaying
+    if cut || (changedPause && paused) { breakPending = true }
     if cut {
       // The notice and the poll can disagree for ~1 s around one transition
       // (duplicate notice, stale old-track read). A second cut naming either
@@ -168,6 +181,7 @@ final class StemPipeline {
     if !value { resetProcessor() }
   }
   func resetProcessor() {
+    closeGate()
     generation += 1; version += 1
     contextStart = max(base, end - windowFrames)
     scheduledEnd = contextStart
@@ -175,11 +189,20 @@ final class StemPipeline {
     provisional = nil; wasProvisional = false; tailScanning = false
     onTrace?(TraceRecord(event: "processor-reset", generation: generation, sourceFrame: outputPosition))
   }
+  /// E2E fixtures that test seams, not entry, start with stems already admitted.
+  func e2eOpenStemGate() { gated = false; entering = false; onTimeStreak = entryStreak }
+  private func closeGate() { gated = true; entering = false; onTimeStreak = 0; neededStreak = 1 }
+  private func coverageGap(at frame: Int) {
+    let repeated = frame - lastGapFrame < 88200
+    closeGate()
+    if repeated { neededStreak = entryStreak }
+    lastGapFrame = frame
+  }
   private func resetContext(at frame: Int, flush: Bool, host: Double = stemClock(), scan: Bool = false) {
+    closeGate()
     version += 1; contextStart = frame; scheduledEnd = frame
     ready.removeAll { flush || $0.range.upperBound > frame }
     if flush {
-      endEase()
       weight = 0; outputPosition = end; hardCuts += 1; ls_flush_output(core)
       provisional = nil; wasProvisional = false
       tailScanning = scan; cutEnd = end; tailScanEnd = end + 13230; gapRun = 0; cutHost = host
@@ -234,6 +257,7 @@ final class StemPipeline {
     // the commit frontier already played; the rest must not fall back.
     let coreLo = max(job.core.lowerBound, outputPosition)
     if coreLo > job.core.lowerBound {
+      onTimeStreak = 0
       partialResults += 1
       onTrace?(TraceRecord(event: "partial-late", generation: generation, sourceFrame: outputPosition,
         sourceEnd: job.core.upperBound, windowStart: result.range.start, lateFrames: coreLo - job.core.lowerBound))
@@ -278,9 +302,24 @@ final class StemPipeline {
         samples: Array(result.samples[at..<at + (job.window.upperBound - tailLo) * 8]))
     } else { provisional = nil }
     acceptedResults += 1
+    if coreLo == job.core.lowerBound {
+      onTimeStreak += 1
+      if gated, onTimeStreak >= neededStreak { gated = false; entering = true }
+    }
     onTrace?(TraceRecord(event: "accepted-result", generation: generation,
       sourceFrame: coreLo, sourceEnd: job.core.upperBound,
       windowStart: result.range.start, deadlineSlackSeconds: Double(job.core.lowerBound - outputPosition) / 44100))
+  }
+  /// Weight for a frame that has stems. Gated: fade out slowly. Entering: fade
+  /// in slowly. Otherwise the 10 ms seam blend between neighbouring estimates.
+  private func blend(toward target: Float) {
+    if gated { weight = max(0, weight - 1 / Float(entryFade)); return }
+    if entering {
+      weight = min(target, weight + 1 / Float(entryFade))
+      if weight >= 1 { entering = false }
+      return
+    }
+    weight += max(-1 / Float(fade), min(1 / Float(fade), target - weight))
   }
   private func block(start: Int, count: Int) -> [Float] {
     var samples = [Float](repeating: 0, count: count * 11)
@@ -293,20 +332,19 @@ final class StemPipeline {
       if let index = ready.firstIndex(where: { $0.range.contains(frame) }) {
         var lo = index
         while lo > 0 && ready[lo - 1].range.upperBound == ready[lo].range.lowerBound { lo -= 1 }
-        let target = min(1, max(Float(frame - ready[lo].range.lowerBound + 1) / Float(fade), weight))
-        weight += max(-1 / Float(fade), min(1 / Float(fade), target - weight))
+        blend(toward: min(1, max(Float(frame - ready[lo].range.lowerBound + 1) / Float(fade), weight)))
         let offset = (frame - ready[index].range.lowerBound) * 8
         for channel in 0..<8 { samples[out + channel] = ready[index].samples[offset + channel] }
         usedProvisional = false
       } else if let tail = provisional, tail.range.contains(frame) {
         // A late result falls back to the previous tail estimate, never to
         // the full mix. The next result replaces these frames on arrival.
-        let target = min(1, max(Float(frame - tail.range.lowerBound + 1) / Float(fade), weight))
-        weight += max(-1 / Float(fade), min(1 / Float(fade), target - weight))
+        blend(toward: min(1, max(Float(frame - tail.range.lowerBound + 1) / Float(fade), weight)))
         let offset = (frame - tail.range.lowerBound) * 8
         for channel in 0..<8 { samples[out + channel] = tail.samples[offset + channel] }
         usedProvisional = true
       } else {
+        if weight > 0 { coverageGap(at: frame) }
         weight = 0
         usedProvisional = false
       }
@@ -330,37 +368,20 @@ final class StemPipeline {
     }
     return samples
   }
-  func beginEase() {
-    // Frames before the cushion were already heard from Spotify directly.
-    outputPosition = max(base, end - easeCushionFrames)
+  /// Take over at a pause or a cut: everything captured so far was already
+  /// heard directly, so playback continues from here after the steady lag.
+  func takeOverAtBreak() {
+    outputPosition = end
     ls_flush_output(core)
-    ls_set_prime(core, UInt32(easePrimeFrames))
-    easing = true; easeRate = 1
-    onTrace?(TraceRecord(event: "ease-start", generation: generation, sourceFrame: outputPosition))
-  }
-  private func endEase() {
-    guard easing else { return }
-    easing = false; easeRate = 1
-    ls_set_prime(core, 0)
-    onTrace?(TraceRecord(event: "ease-end", generation: generation, sourceFrame: outputPosition))
-  }
-  /// Commit only to keep the cushion full; the slow render grows the delay. The
-  /// slowdown shrinks as capture-to-render nears the steady lag plus its 50 ms
-  /// queue, at most 0.2% per step, so the end of the ease matches steady state.
-  private func easeDeadline() -> Int {
-    let queued = Int(ls_queued(core))
-    let remaining = lagFrames + 2205 - (end - (outputPosition - queued))
-    if remaining <= 220, easeRate >= 0.998 { endEase(); return max(outputPosition, end - lagFrames) }
-    let target = 1 - max(0, min(easeMaxSlowdown, Float(remaining) / 22050))
-    easeRate += max(-0.002, min(0.002, target - easeRate))
-    return min(end, outputPosition + max(0, easeCushionFrames - queued))
+    outputLive = true; breakPending = false
+    onTrace?(TraceRecord(event: "takeover-break", generation: generation, sourceFrame: outputPosition))
   }
   func step() {
     // The delay is established once. Missing stems use Original at this exact
     // same deadline. Results cannot push the cursor backward or extend delay.
     if outputPosition < base { outputPosition = end; resetContext(at: end, flush: true) }
-    if paused { endEase() }
-    let deadline = paused ? end : easing ? easeDeadline() : max(outputPosition, end - lagFrames)
+    guard outputLive else { outputPosition = max(outputPosition, end - lagFrames); return }
+    let deadline = paused ? end : max(outputPosition, end - lagFrames)
     let count = deadline - outputPosition
     guard count > 0 else { return }
     let start = outputPosition, samples = block(start: start, count: count)

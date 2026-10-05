@@ -26,7 +26,7 @@ Audio never leaves your Mac and is never saved to disk.
 - The **Spotify** desktop app.
 - **Python 3.12** (for example `brew install python@3.12`).
 - Apple's **Command Line Tools**, to build the app (`xcode-select --install` if you don't have them).
-- About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB), and **1–2 GB of memory** while it runs.
+- About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB), and about **1.5 GB of memory** while stems play (**under 1 GB** while the model sleeps).
 
 ## Install
 
@@ -85,18 +85,18 @@ Run the same command again to update after `git pull`. The previous version is k
 
 ## First launch
 
-1. Play something in Spotify.
-2. Click **Stems** in the menu bar to show the panel.
-3. Press any **M** or **S**, or move a slider. There is no enable button: the first change that needs
-   stems starts Live Stems.
-4. The first time, macOS asks two questions. Allow both:
+1. Open Live Stems. It starts listening right away, while Spotify keeps playing normally.
+2. The first time, macOS asks two questions. Allow both:
    - **Record system audio**, so Live Stems can hear Spotify.
    - **Control Spotify**, so it can read what is playing and notice skips and pauses.
+3. Click **Stems** in the menu bar to show the panel, then press any **M** or **S**, or move a slider.
 
-Live Stems takes a few seconds to start. Until then you hear the normal song; then your mix fades
-in. To make room for the model without a jump, the song plays a touch slower (pitch unchanged) for
-a few seconds as Live Stems takes over. While Live Stems is not running, Spotify plays straight to
-your speakers.
+Live Stems takes over from Spotify at the next pause, skip, or seek, so you never hear the switch.
+After that, any change to the mix fades in within about a second.
+
+If you change the mix before any break, Live Stems makes one: it pauses Spotify for a blink, takes
+over in that silence, and presses play again. The song never slows down or repeats. Switching
+headphones or speakers keeps Live Stems running, so the takeover happens only once.
 
 ## Using it
 
@@ -136,7 +136,6 @@ The details, numbers and test plan are in [docs/internals.md](docs/internals.md)
 | Build says *"The local Python environment is missing"* | Redo [step 2](#2-set-up-python-and-the-model). The folder layout from step 1 must match exactly. |
 | macOS asks for audio permission after every update | The app's signature changed. Check that `work/live-stems-signing-identity.txt` still names your certificate. |
 | Status says *"Spotify capture silent · live Spotify restored"* | Spotify was silent for 10 seconds after Live Stems started. Play something, then change any control. |
-| Status says *"Output changed · live Spotify restored"* | You switched speakers or headphones. Change any control to start again. |
 | Stems drop out for a moment now and then | The GPU is busy with something else (games, video, editing apps). Live Stems plays the plain song for that moment rather than glitching. |
 | The screen flickers and Live Stems stops | macOS restarted the GPU. Save the files named `gpuEvent-*` in `/Library/Logs/DiagnosticReports` and open an issue. |
 

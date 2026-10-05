@@ -7,6 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
     menu = MenuController()
+    // Arm at launch: capture runs with Spotify still direct, and the model
+    // sleeps until a control needs stems. Takeover waits for a natural break.
+    menu?.enable()
     reopenObserver = DistributedNotificationCenter.default().addObserver(
       forName: AppInstance.reopenNotification, object: nil, queue: .main) { [weak self] _ in
         self?.menu?.reopen()

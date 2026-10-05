@@ -24,7 +24,6 @@ struct LSCore {
     int priming, fade_out;
     float meter_hold[4];
     atomic_uint meter[4];
-    atomic_uint prime_frames;
 };
 static void init_ring(Ring *r, uint32_t n, uint32_t ch) { r->capacity=n; r->channels=ch; r->data=calloc((size_t)n*ch,sizeof(float)); }
 LSCore *ls_create(double cr, double rr) {
@@ -36,7 +35,6 @@ LSCore *ls_create(double cr, double rr) {
     float gains[4]={1,1,1,1}; ls_controls(c,gains,0,0); for(int s=0;s<4;s++)c->smooth[s]=1; atomic_store(&c->stems,1); c->stem_blend=1; c->priming=1; return c;
 }
 void ls_destroy(LSCore *c) { if(c){free(c->capture.data);free(c->output.data);free(c->capture_times);free(c->output_times);free(c->output_frames);free(c);} }
-void ls_set_prime(LSCore *c,uint32_t frames){atomic_store(&c->prime_frames,frames);}
 void ls_enable(LSCore *c,int enabled){atomic_store(&c->enabled,enabled);}
 void ls_stems(LSCore *c,int enabled){atomic_store(&c->stems,enabled!=0);}
 void ls_reset(LSCore *c){atomic_store(&c->enabled,0);atomic_fetch_add(&c->epoch,1);ls_discard_capture(c);atomic_store(&c->output.read,atomic_load(&c->output.write));atomic_store(&c->played,0);}
@@ -103,7 +101,7 @@ static int next_frame(LSCore *c,float *left,float *right){
         c->priming=1;c->envelope=0;c->fade_out=96;
         c->render_trace=(LSRenderSnapshot){.source_frame=UINT64_MAX};
     }
-    uint32_t prime=atomic_load(&c->prime_frames);if(!prime)prime=(uint32_t)(c->rate*.05);
+    uint32_t prime=(uint32_t)(c->rate*.05);
     if(pos==end || (c->priming && end-pos<prime)){
         if(!c->priming){atomic_fetch_add(&c->underruns,1);c->priming=1;c->envelope=0;c->fade_out=0;}
         if(c->fade_out>0){
@@ -141,7 +139,9 @@ static int next_frame(LSCore *c,float *left,float *right){
         float l=f[s*2],r=f[s*2+1];if(s==3){l+=f[8]-raw_left;r+=f[9]-raw_right;}
         c->meter_hold[s]=fmaxf(c->meter_hold[s],fmaxf(fabsf(l),fabsf(r))*weight);
     }
-    if(uniform){*left=f[8]*c->smooth[0];*right=f[9]*c->smooth[0];weight=1;}
+    // Equal gains need no stems: the fallback below is then exact (Original at
+    // that gain), and Original mode still ignores the controls.
+    if(uniform)weight=0;
     float ceiling=fmaxf(.98f,fmaxf(fabsf(f[8]),fabsf(f[9])));
     float peak=fmaxf(fabsf(*left),fabsf(*right));if(peak>ceiling){float gain=ceiling/peak;*left*=gain;*right*=gain;}
     // Missing stems keep only the stem-free part of the mix: Original at

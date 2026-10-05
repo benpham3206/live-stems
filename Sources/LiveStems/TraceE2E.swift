@@ -86,6 +86,7 @@ enum TraceE2E {
       throw StemError("Irregular result lost source coverage between consecutive windows")
     }
     var lastCoveredWeight: Float = 0
+    pipeline.e2eOpenStemGate()  // this check is about the end of coverage, not entry
     pipeline.onCommit = { _, block in lastCoveredWeight = block.last ?? 0 }
     pipeline.ingest([Float](repeating: 0.1, count: 9250 * 2), hostTime: 200.323197)
     pipeline.step()

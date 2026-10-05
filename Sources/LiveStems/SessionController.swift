@@ -12,6 +12,7 @@ final class SessionController {
   private var token: UInt64 = 0, job: UInt64 = 0, busy = false, enabled = false,
     outputOn = false, stemsSelected = true, warmupsLeft = 0
   private var awaitingFirstAudio = false, cutHost = 0.0
+  private var selfPauseAt: Double?  // when Live Stems paused Spotify to make a takeover break
   private var controls = StemControls(), began = 0.0, capturePeak: Float = 0,
     lastCaptureEndHost = 0.0
   private var lastDeviceCheck = 0.0, lastDiagnostics = 0.0, lastStatus = ""
@@ -74,6 +75,7 @@ final class SessionController {
           // Hardware startup can block while the tap already captures. Those
           // samples predate our playback clock and must not become a backlog.
           pipeline.start(generation: token)
+          pipeline.holdForBreak()
           audio.discardCapturedAudio()
           self.busy = false
           self.began = stemClock()
@@ -113,8 +115,12 @@ final class SessionController {
     do {
       if stemClock() - lastDeviceCheck > 0.5 {
         lastDeviceCheck = stemClock()
-        guard defaultOutput() == audio.outputID else {
-          throw StemError("Output changed · live Spotify restored")
+        if defaultOutput() != audio.outputID {
+          // Follow headphones or speakers; capture and the delay stay, so no new takeover.
+          try audio.followOutput()
+          trace.record(TraceRecord(event: "output-change", generation: token,
+            sourceFrame: pipeline.outputPosition, outputBufferFrames: audio.outputBufferFrames))
+          self.status(mixStatus(pipeline))
         }
       }
       let samples = try audio.drain()
@@ -138,18 +144,30 @@ final class SessionController {
         finishQuit()
         return
       }
-      audio.setPlaybackRate(pipeline.easeRate)
-      if !outputOn, pipeline.end - pipeline.base >= pipeline.easeCushionFrames + 441 {
-        // Direct Spotify continues during startup. Hand off at the live edge with
-        // a short cushion, then let the ease grow the delay: nothing repeats.
-        pipeline.beginEase()
-        pipeline.step()
+      // Direct Spotify plays until a natural break (pause, skip, seek), where the
+      // 0.3 s shift is silent. Stems wanted before then: make a break by pausing
+      // Spotify, take over in that silence, and press play again. If no pause
+      // arrives within 2 s, take over anyway (a 0.3 s gap, never a replay).
+      let atBreak = pipeline.paused || pipeline.breakPending
+      if !outputOn, !pipeline.resting, !atBreak, selfPauseAt == nil {
+        selfPauseAt = stemClock()
+        spotify?.command("pause")
+        trace.record(TraceRecord(event: "self-pause", generation: token, sourceFrame: pipeline.end))
+      }
+      let pauseTimedOut = selfPauseAt.map { stemClock() - $0 > 2 } ?? false
+      if !outputOn, atBreak || pauseTimedOut {
+        // Mute first: if macOS refuses, nothing has moved yet.
         try audio.setOriginalSuppressed(true)
+        pipeline.takeOverAtBreak()
+        pipeline.step()
+        // Always undo our own pause, even if its notice never came: the commands
+        // run in order on one queue, so Spotify can never be left paused by us.
+        if selfPauseAt != nil { spotify?.command("play") }
+        selfPauseAt = nil
         audio.setOutputEnabled(true)
         outputOn = true
         trace.record(TraceRecord(event: "handoff", generation: token,
-          sourceFrame: pipeline.outputPosition, queuedFrames: ls_queued(audio.core),
-          outputBufferFrames: audio.outputBufferFrames))
+          sourceFrame: pipeline.outputPosition, queuedFrames: ls_queued(audio.core), outputBufferFrames: audio.outputBufferFrames))
         DispatchQueue.main.async { self.onReady?() }
       }
       startJob()
@@ -332,7 +350,7 @@ final class SessionController {
       observedCaptureToRenderSeconds: observedAge,
       fallbacks: p.fallbacks, paused: p.paused, blendWeight: p.weight,
       cacheBytes: p.cacheBytes, cacheLimitBytes: p.memoryLimit, jumps: p.jumps, hardCuts: p.hardCuts,
-      stemsSelected: stemsSelected, modelResting: p.resting, easing: p.easing, windowFrames: p.windowFrames, hopFrames: p.hop,
+      stemsSelected: stemsSelected, modelResting: p.resting, windowFrames: p.windowFrames, hopFrames: p.hop,
       lateResults: p.lateResults, acceptedResults: p.acceptedResults,
       steadyFrames: p.steadyFrames, steadyFullStemFrames: p.steadyFullStemFrames,
       steadyFallbackFrames: p.steadyFallbackFrames, steadyProvisionalFrames: p.steadyProvisionalFrames
@@ -341,7 +359,7 @@ final class SessionController {
   private func end(_ message: String) {
     let completion = quitCompletion
     quitCompletion = nil
-    trace.record(TraceRecord(event: "stop", generation: token, sourceFrame: pipeline?.outputPosition))
+    trace.record(TraceRecord(event: "stop", generation: token, sourceFrame: pipeline?.outputPosition, reason: message))
     enabled = false
     token += 1
     timer?.cancel()
@@ -373,7 +391,8 @@ final class SessionController {
     queue.async {
       self.quitVersion &+= 1
       self.quitCompletion = completion
-      guard self.enabled, let audio = self.audio, let pipeline = self.pipeline else {
+      // Before takeover Spotify is still direct: nothing to relay or drain.
+      guard self.enabled, self.outputOn, let audio = self.audio, let pipeline = self.pipeline else {
         self.finishQuit(); return
       }
       self.stemsSelected = false

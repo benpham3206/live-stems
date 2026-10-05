@@ -59,20 +59,49 @@ A small Original relay keeps the playback clock until Spotify pauses. It then
 drains the queued tail and exits. Open the app again to restore its controls
 and cancel the pending exit. The relay does not run the model.
 
-At cold startup, direct Spotify remains audible while the worker warms. Capture
-takes over at the live edge with a 30 ms cushion and a 15 ms prime, so at most
-30 ms that the listener already heard plays again. Playback then runs slow
-through an AVAudioUnitTimePitch (pitch kept, at most 6 %, rate change at most
-0.2 % per 10 ms step) until capture-to-render reaches the steady lag plus its
-50 ms queue. This takes about 6 s. The unit is bit-exact at rate 1, so steady
-playback is unchanged. A skip, seek, or pause during the ease ends it at once.
-Stems need about 215 ms of delay, so the first stem mix after a cold start
-arrives after about 3–4 s. The `ease` stage checks this without a worker. Within
+The app arms at launch: capture and the worker start, Spotify stays direct, and
+the pipeline commits nothing (holdForBreak), so waiting cannot fill the queue.
+It takes over at the next natural break: while Spotify is paused (silent), or at
+a track change or seek notice. Takeover discards everything already heard, so
+playback resumes from that point after the steady lag and nothing repeats; the
+shift lands on silence or a fresh start. Quit before takeover ends at once.
+
+If stems are wanted before any break, the session makes one: it sends Spotify
+"pause" over Apple Events, takes over when the paused state arrives, and sends
+"play" (always, even if the pause notice never came, so Spotify is never left
+paused). If no pause arrives within 2 s it takes over anyway, which leaves a
+0.3 s gap and never a replay. An earlier time-stretch ease (AVAudioUnitTimePitch,
+6 % then 1.5 %) was audible, especially on Bluetooth, and was removed.
+
+A change of default output moves the AVAudioEngine output to the new device.
+Capture, the queue, and the delay stay, so no second takeover happens.
+
+Stems (re)enter after on-time results, then fade in over 200 ms. One isolated
+coverage gap, a skip, or a wake needs one on-time result, so a single miss
+recovers within the stream stage's 500 ms. A second gap within 2 s needs three
+results in a row; a partly late result resets that count. Without the gate,
+partly late results made stems flicker against Original about ten times a
+second. The `flutter` stage uses a worker whose every third answer is 300 ms
+late: without escalation the stem weight turns down 20 times in 12 s, with it
+twice, and stems return once the worker is healthy.
+
+Spotify state reads are stamped at the middle of the AppleScript call, when
+Spotify sampled the position. Stamping at publish time made slow reads (worse
+while a pause or play command shares the reader queue) look like seeks, which
+flushed playback. The skip-state stage checks the stamp with a 0.6 s read.
+A read samples the position at an unknown point inside a call that can take
+about 0.5 s, so a same-track position counts as a seek only beyond 1 s. A false
+seek flushes audible playback; a missed sub-second seek costs only model context.
+
+Within
 captured playback, Original and stems use the same source frames.
 
 Capture history is bounded to three seconds and compacts to two seconds. Ready
 stem data has an 8 MiB bound. No song library or long track cache is retained.
-The model allocation cache has a 1 GiB bound. Live process memory and inference
+The model allocation cache has a 512 MiB bound; 1 GiB measured no faster
+(p50 about 60 ms either way) and used 0.45 GB more. After 2 s without requests
+(the model sleeps), the worker empties the cache: about 0.85 GB idle instead of
+1.5 GB, and the first job after a sleep takes about 77 ms instead of 60. Live process memory and inference
 deadlines remain acceptance checks. Only one app instance can acquire capture.
 Metadata is used to invalidate context on seeks and track changes. The captured
 sample clock remains the authority for audio alignment.
@@ -138,6 +167,12 @@ the timing trace and action snapshots. It does not use CUA. The `rest` stage
 needs no worker. It checks that the model gets no jobs while it rests or while
 Spotify is paused, and that the resting mix follows the controls.
 
+The `transitions` stage needs no worker. It runs 25 seeds of random skips,
+seeks, pauses, duplicate notices, model sleep and wake, late results, and the
+takeover (break or self-pause). Playback must never go backward, must replay
+nothing at takeover, must not underrun outside a transition, and must
+settle at the steady delay.
+
 The signed `quit` stage checks actual capture, worker exit, Original relay,
 reopen, and final drain. It injects the metadata pause locally. It does not
 pause Spotify. The `quit-race` stage uses session barriers to cancel a Quit
@@ -145,8 +180,19 @@ completion already queued on the main run loop. The `capture-cut` stage sends
 old and crossing timestamped blocks through the actual capture callback and
 converter. It saves the converted WAVs and exact comparison.
 
+Launch the live `quit` and `return` stages through `open`, not from a shell.
+Run from a shell, macOS can refuse to mute Spotify's tap ('!hog',
+560492391), and the session stops at the handoff. Quit the normal app first.
+
 ```sh
-"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e quit --output outputs/live-stems-acceptance/transitions-2/repeat-quit
+open -W -g "/Applications/Live Stems.app" --args --e2e quit --output "$PWD/outputs/live-stems-acceptance/pr2-live/quit"
+open -W -g "/Applications/Live Stems.app" --args --e2e return --output "$PWD/outputs/live-stems-acceptance/pr2-live/return"
+```
+
+The GPU-free stages run from a shell:
+
+```sh
+"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e transitions --output outputs/live-stems-acceptance/transitions
 "/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e quit-race --output outputs/live-stems-acceptance/transitions-2/repeat-race
 "/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e capture-cut --output outputs/live-stems-acceptance/transitions-2/repeat-cut
 ```
