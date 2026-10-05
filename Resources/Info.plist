@@ -12,6 +12,6 @@
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>LSUIElement</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
-<key>NSAudioCaptureUsageDescription</key><string>Capture Spotify audio locally to separate vocals, drums, bass, and other instruments.</string>
+<key>NSAudioCaptureUsageDescription</key><string>Capture the chosen app's audio locally to separate vocals, drums, bass, and other instruments.</string>
 <key>NSAppleEventsUsageDescription</key><string>Read Spotify playback state locally to align cached audio with the current track.</string>
 </dict></plist>

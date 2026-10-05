@@ -115,6 +115,22 @@ enum StreamMixerChecks {
       pipeline.step()
     }
     observe(playing: true)
+    // Quiet detection (the takeover break for apps without transport notices).
+    pipeline.ingest([Float](repeating: 0.0005, count: 11025 * 2), hostTime: stemClock())
+    guard pipeline.quietFrames == 11025 else { throw StemError("Quiet run measured \(pipeline.quietFrames) frames") }
+    pipeline.ingest([Float](repeating: 0.3, count: 441 * 2) + [Float](repeating: 0, count: 100 * 2), hostTime: stemClock())
+    guard pipeline.quietFrames == 100 else { throw StemError("Quiet run did not restart after sound") }
+    // A dip takeover (no quiet moment came) fades back in over 50 ms.
+    var dipped = [Float]()
+    pipeline.onCommit = { _, block in for f in 0..<block.count / 11 { dipped.append(block[f * 11 + 8]) } }
+    pipeline.takeOverAtBreak(fadeIn: true)
+    pipeline.ingest([Float](repeating: 0.5, count: 22050 * 2), hostTime: stemClock())
+    pipeline.step()
+    pipeline.onCommit = nil
+    guard dipped.count > 2205, dipped[0] < 0.001, abs(dipped[1102] - 0.25) < 0.01, abs(dipped[2205] - 0.5) < 1e-6,
+      zip(dipped.prefix(2205), dipped.dropFirst().prefix(2205)).allSatisfy({ $1 >= $0 }) else {
+      throw StemError("Dip takeover did not fade in over 50 ms")
+    }
     drive(88200)
     pipeline.setResting(true)
     let steadyBefore = pipeline.steadyFrames

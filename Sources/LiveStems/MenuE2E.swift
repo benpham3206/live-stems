@@ -129,6 +129,12 @@ enum MenuE2E {
       "app_active_after_click": app.isActive,
     ])
 
+    let picker = try control(named: "Audio source", in: window)
+    guard let popup = picker as? NSPopUpButton, popup.numberOfItems >= 1,
+      popup.titleOfSelectedItem == AudioSource.saved.name else {
+      throw StemError("Audio source picker missing, empty, or not showing the saved source")
+    }
+    checks.append(["name": "source_picker", "items": popup.numberOfItems])
     controller.e2eApplyStatusForTest(enabled: false)  // as after launch: nothing running yet
     try require(starts == 0, "Live Stems started before any control needed stems")
     for label in ["Vocals Mute", "Vocals Solo"] {

@@ -2,7 +2,7 @@ import Foundation
 
 enum QuitRaceE2E {
   static func run(_ out: URL) throws {
-    let session = SessionController(traceDirectory: out)
+    let session = SessionController(traceDirectory: out, source: .spotify)
     var completions = 0
     // Main is deliberately not pumping. The synchronous session barrier
     // guarantees finishQuit has queued termination before reopen cancels it.

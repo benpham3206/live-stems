@@ -9,7 +9,10 @@ enum ReturnE2E {
       throw StemError("Close Live Stems before the Return scenario")
     }
     defer { close(descriptor) }
-    let session = SessionController(traceDirectory: out)
+    // LIVE_STEMS_E2E_SOURCE=<bundle id> runs this against another app (no transport notices).
+    let sourceID = ProcessInfo.processInfo.environment["LIVE_STEMS_E2E_SOURCE"]
+    let session = SessionController(traceDirectory: out,
+      source: sourceID.map { AudioSource(bundleID: $0, name: $0) } ?? .spotify)
     var stopped = false
     defer { if !stopped { session.shutdownSync() } }
     let path = LocalSettings.evidence.appendingPathComponent("active-session.json")
@@ -37,7 +40,7 @@ enum ReturnE2E {
         $0.active && $0.handedOff && !$0.paused && $0.acceptedResults >= 10
           && $0.capturePeak > 0.001 && $0.workerPID > 0
       }
-      session.useLiveSpotify()
+      session.useDirectPlayback()
       let original = try wait(5) { $0.active && $0.workerPID == 0 && !$0.stemsSelected }
       let continued = try wait(5) { $0.workerPID == 0 && $0.playedFrames > original.playedFrames + 44100 }
       guard original.sessionGeneration == initial.sessionGeneration,
@@ -49,7 +52,7 @@ enum ReturnE2E {
       // running throughout; the second replacement must own completion.
       session.toggleMix()
       RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
-      session.useLiveSpotify()
+      session.useDirectPlayback()
       RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
       session.toggleMix()
       let resumed = try wait(35) {

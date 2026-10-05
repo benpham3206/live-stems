@@ -26,6 +26,9 @@ final class StemPipeline {
   // Until takeover the listener hears Spotify directly and nothing is queued.
   // A pause, skip, or seek is a break where the 0.3 s shift cannot be heard.
   private(set) var outputLive = true, breakPending = false
+  /// How long the captured audio has been quiet, in frames, up to the newest frame.
+  private(set) var quietFrames = 0
+  private var dipFade = 0..<0
   /// The live session holds output for a break; fixtures keep committing at once.
   func holdForBreak() { outputLive = false; breakPending = false }
   // Stems (re)enter after on-time results, then fade in over entryFade. One
@@ -82,11 +85,22 @@ final class StemPipeline {
     captureHost = hostTime
     guard !paused else { return }
     history.append(contentsOf: samples); end += samples.count / 2
+    // Trailing quiet frames (below about -48 dBFS): a quiet moment is a break
+    // for any source app, where the takeover's 0.3 s shift cannot be heard.
+    for frame in stride(from: samples.count / 2 - 1, through: 0, by: -1) {
+      guard max(abs(samples[frame * 2]), abs(samples[frame * 2 + 1])) < 0.004 else {
+        quietFrames = samples.count / 2 - 1 - frame; return finishIngest(samples.count / 2)
+      }
+    }
+    quietFrames += samples.count / 2
+    finishIngest(samples.count / 2)
+  }
+  private func finishIngest(_ frames: Int) {
     if end - base > 3 * 44100 {
       let remove = end - base - 2 * 44100
       history.removeFirst(remove * 2); base += remove
     }
-    if tailScanning { scanTail(from: end - samples.count / 2) }
+    if tailScanning { scanTail(from: end - frames) }
   }
   // After a manual cut the notice precedes the acoustic change by ~50 ms and
   // a true silence gap follows the old-track tail. The first gap start is the
@@ -326,6 +340,7 @@ final class StemPipeline {
     for i in 0..<count {
       let frame = start + i, out = i * 11, source = (frame - base) * 2
       samples[out + 8] = history[source]; samples[out + 9] = history[source + 1]
+      let dip: Float = dipFade.contains(frame) ? Float(frame - dipFade.lowerBound + 1) / Float(dipFade.count) : 1
       let usedProvisional: Bool
       // Targets never pull weight down while estimates cover the frame. A
       // ready/provisional handoff then continues at full stems, never dips.
@@ -353,6 +368,7 @@ final class StemPipeline {
         onTrace?(TraceRecord(event: usedProvisional ? "provisional-cover" : "provisional-end",
           generation: generation, sourceFrame: frame))
       }
+      if dip < 1 { for channel in 0..<10 { samples[out + channel] *= dip } }
       samples[out + 10] = weight
       if traceCovered != (weight >= 0.999) {
         traceCovered = weight >= 0.999
@@ -370,8 +386,10 @@ final class StemPipeline {
   }
   /// Take over at a pause or a cut: everything captured so far was already
   /// heard directly, so playback continues from here after the steady lag.
-  func takeOverAtBreak() {
+  func takeOverAtBreak(fadeIn: Bool = false) {
     outputPosition = end
+    // A dip (no quiet moment came) resumes with a 50 ms fade instead of a hard start.
+    dipFade = fadeIn ? end..<(end + 2205) : 0..<0
     ls_flush_output(core)
     outputLive = true; breakPending = false
     onTrace?(TraceRecord(event: "takeover-break", generation: generation, sourceFrame: outputPosition))

@@ -1,32 +1,81 @@
 # Live Stems
 
-**Split whatever Spotify is playing into vocals, drums, bass and everything else, live, on your Mac.**
-Mute the vocals for karaoke, solo the bass to learn a line, or turn the drums down, on any song,
-while it plays. No downloads, no prepared tracks: the separation happens as the music plays.
+**Separate the audio of any app on your Mac into vocals, drums, bass and everything else, live.**
+Mute the vocals to study with instrumentals or sing along, solo the bass to learn a line, turn the
+drums down to practice over them. It works while Spotify, Apple Music, a YouTube tab, VLC or any
+other app is playing. Nothing is downloaded, prepared or saved: the separation happens as you listen.
 
 ![The Live Stems panel](docs/panel.png)
 
-Live Stems sits in your menu bar. Its panel has one row per stem, like a Logic Pro track header:
+Live Stems sits in your menu bar. Its panel has:
 
-- a **volume slider**,
-- **M** (mute, blue) and **S** (solo, yellow) buttons,
-- a small **waveform** that shows what that stem is doing right now.
+- a **source menu**: pick the app whose audio you want to split,
+- one row per stem, like a Logic Pro track header: a **volume slider**, **M** (mute, blue) and
+  **S** (solo, yellow) buttons, and a small **waveform** of what that stem is doing right now,
+- an **All stems** row: **M** mutes everything, **S** lights up while anything is soloed (click it to
+  clear every solo, like Logic),
+- **Reset**, which puts every control back to normal.
 
-The **All stems** row has an **M** that mutes everything and an **S** that lights up while anything
-is soloed; click it to clear every solo at once, like Logic. **Reset** puts every control back to normal and restarts the stem splitter if it stopped.
+## How it works
 
-It uses [Demucs](https://github.com/facebookresearch/demucs), Meta's music separation model, running
-on your Mac's GPU through [demucs-mlx](https://github.com/ssmall256/demucs-mlx). Nothing is uploaded.
-Audio never leaves your Mac and is never saved to disk.
+```
+                       ┌─ Spotify
+                       ├─ Apple Music
+  the app you pick ────┼─ Chrome / Safari / YouTube
+                       ├─ VLC, Logic
+                       └─ any other app
+                              │
+                              ▼
+                       macOS audio tap
+                              │
+                              ▼
+                 last ~3 s, in memory only
+                              │
+                              ▼
+          Demucs on your Mac's GPU, 10 times a second
+                              │
+                vocals · drums · bass · other
+                              │
+                              ▼
+            your mix ──▶ speakers or headphones
+```
+
+1. **macOS hands Live Stems the sound of the app you picked**, the same way an equalizer or an audio
+   visualizer gets it. Live Stems never opens the app's files or its stream.
+2. **It keeps only the last few seconds**, in memory. Older audio is thrown away continuously.
+3. **Ten times a second, the newest second goes through
+   [Demucs](https://github.com/facebookresearch/demucs)**, Meta's music separation model, on your
+   Mac's GPU. The model returns four stems.
+4. **Your sliders remix the stems** and the result goes to your speakers or headphones, about a third
+   of a second behind the app. The delay never changes, so you won't notice it.
+
+If the model is ever late, that moment plays the parts of your mix that don't need stems instead of
+glitching. When your mix is the plain song (every stem at the same volume) or the music is paused,
+the model sleeps and your GPU rests.
+
+## What Live Stems does not do
+
+These are deliberate limits, not missing features:
+
+- **It doesn't download, export or save audio or stems.** Only the last ~3 seconds exist, in memory.
+- **It doesn't touch an app's files, cache, stream or copy protection.** It only hears what the app
+  plays, through macOS.
+- **It doesn't use any streaming service's API or SDK.** Spotify plays normally in its own app.
+- **It doesn't train the model.** The model is used as downloaded (inference only).
+- **Its logs hold timing numbers only**, never audio or song titles.
+
+Streaming services' own terms of use still apply to how you use their content. This README is not
+legal advice. Live Stems is meant for personal listening and practice; don't use it to copy or share
+music.
 
 ## What you need
 
 - A Mac with **Apple Silicon** running **macOS 26 or newer**. Built and tested on an **M3 Max**. The model
   must finish each job in under 0.1 s; on slower chips, stems may drop out to the plain song more often.
-- The **Spotify** desktop app.
 - **Python 3.12** (for example `brew install python@3.12`).
 - Apple's **Command Line Tools**, to build the app (`xcode-select --install` if you don't have them).
-- About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB), and about **1.5 GB of memory** while stems play (**under 1 GB** while the model sleeps).
+- About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB),
+  and about **1.5 GB of memory** while stems play (**under 1 GB** while the model sleeps).
 
 ## Install
 
@@ -58,8 +107,8 @@ converts it for your GPU.
 
 ### 3. Make a signing certificate (one time)
 
-macOS asks for permission to capture Spotify's audio. It only remembers your answer if every build
-of the app has the same signature, so the app is signed with a certificate of your own:
+macOS asks for permission to capture app audio. It only remembers your answer if every build of the
+app has the same signature, so the app is signed with a certificate of your own:
 
 1. Open **Keychain Access** and choose **Keychain Access > Certificate Assistant > Create a Certificate…**
 2. Name it `Live Stems Local`, set **Certificate Type** to **Code Signing**, and click **Create**.
@@ -85,48 +134,37 @@ Run the same command again to update after `git pull`. The previous version is k
 
 ## First launch
 
-1. Open Live Stems. It starts listening right away, while Spotify keeps playing normally.
-2. The first time, macOS asks two questions. Allow both:
-   - **Record system audio**, so Live Stems can hear Spotify.
-   - **Control Spotify**, so it can read what is playing and notice skips and pauses.
-3. Click **Stems** in the menu bar to show the panel, then press any **M** or **S**, or move a slider.
+1. Open Live Stems and click **Stems** in the menu bar to show the panel.
+2. Pick the app you're listening to in the **source menu**. Live Stems remembers it.
+3. The first time, macOS asks to let Live Stems **record system audio**. Allow it. If the source is
+   Spotify, macOS also asks to let it **control Spotify**, which it uses to notice pauses and skips.
+4. Press any **M** or **S**, or move a slider.
 
-Live Stems takes over from Spotify at the next pause, skip, or seek, so you never hear the switch.
-After that, any change to the mix fades in within about a second.
+Until you change the mix, the app plays straight to your speakers. When you first change it, Live
+Stems takes over the app's sound at a moment where the switch can't be heard:
 
-If you change the mix before any break, Live Stems makes one: it pauses Spotify for a blink, takes
-over in that silence, and presses play again. The song never slows down or repeats. Switching
-headphones or speakers keeps Live Stems running, so the takeover happens only once.
+- **at a pause, a skip or a quiet moment** (a gap between songs, a quiet bar), if one comes within
+  about 3 seconds;
+- **Spotify:** otherwise it pauses Spotify for a blink, takes over in that silence and presses play
+  again;
+- **other apps:** otherwise it does a quick dip: the sound stops for about a third of a second and
+  fades back in where it left off.
+
+Nothing ever repeats or slows down. After that, any change to the mix fades in within about a second,
+and switching headphones or speakers keeps Live Stems running.
 
 ## Using it
 
 - **Move a slider, press M or S:** the stems fade in within a second.
 - **Waveforms** show each stem's level before its slider. A muted stem still shows its waveform, dimmed.
   They are flat while the model sleeps.
-- **The model sleeps when it isn't needed**, so your GPU and battery rest:
-  - all four stems at the same volume (untouched, all muted, or all at the same level),
-  - Spotify paused.
-
-  The status line tells you which: *Live stems*, *Original · model asleep*, *Muted · model asleep*.
-- **Reset** returns every control to normal and brings the stem splitter back, for example after you
-  reopen the app during a Quit. With nothing changed, the model then sleeps.
-- **Skip, seek and pause** in Spotify as usual. Live Stems follows along and rebuilds the stems for the new spot.
-- **Quit Live Stems** resets the mix and fades back to the plain song. If you reopen it, it starts
-  from the original song with the model asleep. The app waits until Spotify pauses before it lets go,
-  so your music never cuts out.
-
-Everything you hear is about a third of a second behind Spotify. The delay never changes, so you
-won't notice it unless you watch Spotify's lyrics or progress bar.
-
-## How it works
-
-Spotify's audio is tapped before it reaches your speakers and held for 260 ms. Ten times a second,
-the newest second of audio goes to the model, which returns four stems. The app keeps only the newest
-tenth of a second of each answer and blends the answers together. Your sliders then remix the stems as
-they play. If an answer is ever late, that moment plays the parts of your mix that don't need stems
-instead of glitching. The song never rewinds or drifts.
-
-The details, numbers and test plan are in [docs/internals.md](docs/internals.md).
+- **The model sleeps when it isn't needed**, so your GPU and battery rest: when all four stems are at
+  the same volume (untouched, all muted, or all at the same level), or when the music is paused. The
+  status line tells you which: *Live stems*, *Original · model asleep*, *Muted · model asleep*.
+- **Reset** returns every control to normal and brings the stem splitter back if it stopped.
+- **Change the source** at any time in the source menu; Live Stems restarts on the new app.
+- **Quit Live Stems** resets the mix and hands the sound back to the app at the next pause or quiet
+  moment, so your music never cuts out.
 
 ## Something wrong?
 
@@ -135,7 +173,8 @@ The details, numbers and test plan are in [docs/internals.md](docs/internals.md)
 | Build says *"A stable signing certificate is required"* | Redo [step 3](#3-make-a-signing-certificate-one-time). The ID file must hold one 40-character ID. |
 | Build says *"The local Python environment is missing"* | Redo [step 2](#2-set-up-python-and-the-model). The folder layout from step 1 must match exactly. |
 | macOS asks for audio permission after every update | The app's signature changed. Check that `work/live-stems-signing-identity.txt` still names your certificate. |
-| Status says *"Spotify capture silent · live Spotify restored"* | Spotify was silent for 10 seconds after Live Stems started. Play something, then change any control. |
+| No stems from a browser | Pick the browser itself in the source menu (not a tab). Live Stems also captures the browser's audio helper processes. |
+| Status says *"… capture silent · direct playback restored"* | Spotify was silent for 10 seconds after Live Stems started. Play something, then change any control. |
 | Stems drop out for a moment now and then | The GPU is busy with something else (games, video, editing apps). Live Stems plays the plain song for that moment rather than glitching. |
 | The screen flickers and Live Stems stops | macOS restarted the GPU. Save the files named `gpuEvent-*` in `/Library/Logs/DiagnosticReports` and open an issue. |
 
@@ -149,15 +188,22 @@ Live Stems keeps small timing logs, never audio or song titles, in
 3. Optional: delete the `Live Stems Local` certificate in **Keychain Access**, and remove Live Stems under
    **System Settings > Privacy & Security** (Screen & System Audio Recording, and Automation).
 
+## Under the hood
+
+The interesting part isn't the model, it's running an offline separator live: rolling one-second
+windows, playback deadlines, stand-in estimates when a result is late, crossfades between estimates,
+skip and pause detection, a bounded history, and one fixed playback clock that never rewinds or
+drifts (about 0.31 s from capture to speaker). The design, numbers and test plan are in
+[docs/internals.md](docs/internals.md).
+
 ## Credits and disclaimer
 
 Live Stems is an unofficial personal project by Ben Pham. It isn't affiliated with, endorsed by, or
-sponsored by Spotify or Meta. Spotify is a trademark of Spotify AB.
+sponsored by Spotify, Apple, Google, Meta or any other company whose app it can hear. Names are
+trademarks of their owners.
 
 Separation uses [Demucs](https://github.com/facebookresearch/demucs) by Meta AI Research and its
 MLX port [demucs-mlx](https://github.com/ssmall256/demucs-mlx). The model weights are downloaded from
 their official source during install. They are not part of this repository.
 
-Live Stems captures Spotify through a macOS audio tap and reads Spotify's state with Apple Events. A
-Spotify or macOS update could break it. It is meant for personal listening and practice: don't use
-it to copy or share music.
+Live Stems relies on macOS audio taps; a macOS update could break it.

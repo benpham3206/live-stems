@@ -17,7 +17,7 @@ enum QuitE2E {
       return PlaybackSnapshot(trackID: "quit-e2e", title: "Live capture", duration: 3600,
         position: position, isPlaying: !paused)
     })
-    let session = SessionController(traceDirectory: out, spotifyState: state)
+    let session = SessionController(traceDirectory: out, spotifyState: state, source: .spotify)
     defer { session.shutdownSync() }
     let diagnostics = LocalSettings.evidence.appendingPathComponent("active-session.json")
     var snapshots = [SessionDiagnostics](), completions = 0
