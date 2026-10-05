@@ -154,6 +154,8 @@ enum NativeE2E {
       try JSONSerialization.data(withJSONObject: runs, options: [.prettyPrinted, .sortedKeys])
         .write(to: out.appendingPathComponent("transitions.json"))
       print("PASS transitions · 25 seeds × 75 s of random skips, seeks, pauses, sleeps, late results")
+    case "fades":
+      print("PASS fades · \(try StreamMixerChecks.fades())")
     case "flutter":
       let report = try StreamMixerChecks.flutter()
       try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])

@@ -164,8 +164,9 @@ final class StemPipeline {
       let boundary = natural ? max(contextStart, end - Int(position * 44100)) : end
       resetContext(at: boundary, flush: !natural, host: hostTime, scan: !natural)
     } else if changedPause {
-      // Drain already captured audio on pause. A resume begins new model
-      // context but retains the queued source timeline, including short pauses.
+      // Pause fades out at the notice instead of playing out the delay. A
+      // resume begins new model context; Spotify's own fade-in is captured.
+      if paused { fadeOut(Self.pauseFadeFrames); outputPosition = end }
       resetContext(at: end, flush: false)
     }
     snapshot = value; snapshotHost = hostTime
@@ -200,12 +201,24 @@ final class StemPipeline {
   }
   /// E2E fixtures that test seams, not entry, start with stems already admitted.
   func e2eOpenStemGate() { gate.openForTest() }
+  /// Spotify's own fades, measured with skip-probe: gain (1 - t/T)^4 from the
+  /// notice, T = 280 ms on pause and 100 ms on next, previous, and seeks.
+  static let pauseFadeFrames = 12348, skipFadeFrames = 4410
+  /// Fade out what is playing now, like Spotify, then drop the rest. The fade
+  /// plays the delay's worth of captured audio, so it starts at the notice;
+  /// it uses the current mix and stems, before any context reset clears them.
+  private func fadeOut(_ frames: Int) {
+    guard outputLive else { ls_flush_output(core); return }
+    commit(through: outputPosition + min(frames - Int(ls_queued(core)), end - outputPosition))
+    ls_flush_output_faded(core, UInt32(frames))
+  }
   private func resetContext(at frame: Int, flush: Bool, host: Double = stemClock(), scan: Bool = false) {
+    if flush { fadeOut(Self.skipFadeFrames) }
     gate.reset()
     version += 1; contextStart = frame; scheduledEnd = frame
     ready.removeAll { flush || $0.range.upperBound > frame }
     if flush {
-      weight = 0; outputPosition = end; hardCuts += 1; ls_flush_output(core)
+      weight = 0; outputPosition = end; hardCuts += 1
       provisional = nil; wasProvisional = false
       tailScanning = scan; cutEnd = end; tailScanEnd = end + 13230; gapRun = 0; cutHost = host
     }
@@ -378,7 +391,9 @@ final class StemPipeline {
     // same deadline. Results cannot push the cursor backward or extend delay.
     if outputPosition < base { outputPosition = end; resetContext(at: end, flush: true) }
     guard outputLive else { outputPosition = max(outputPosition, end - lagFrames); return }
-    let deadline = paused ? end : max(outputPosition, end - lagFrames)
+    commit(through: max(outputPosition, end - lagFrames))
+  }
+  private func commit(through deadline: Int) {
     let count = deadline - outputPosition
     guard count > 0 else { return }
     let start = outputPosition, samples = block(start: start, count: count)
