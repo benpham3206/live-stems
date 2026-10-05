@@ -79,7 +79,7 @@ final class ControlsPanel: NSView {
   static let size = NSSize(width: 360, height: 540)
   static let muteColor = NSColor.systemBlue
   static let soloColor = NSColor(srgbRed: 1, green: 0.82, blue: 0.2, alpha: 1)
-  let sourcePicker = NSPopUpButton(frame: NSRect(x: 14, y: 478, width: 236, height: 28), pullsDown: false)
+  let sourcePicker = NSPopUpButton(frame: NSRect(x: 14, y: 478, width: 236, height: 28), pullsDown: true)
   let resetButton = NSButton(title: "Reset", target: nil, action: nil)
   let statusLabel = NSTextField(labelWithString: ""), outputLabel = NSTextField(labelWithString: "")
   let muteAllButton = LogicToggle(letter: "M", lit: muteColor)

@@ -133,8 +133,10 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate {
   }
   func menuNeedsUpdate(_ menu: NSMenu) { fillSources() }
   /// Open regular apps (not Live Stems), plus the saved source if it is closed.
-  private func fillSources() {
-    let current = session.source
+  /// It is a pull-down so it always opens below the panel's top edge; item 0 is
+  /// the button title, so it repeats the current source.
+  private func fillSources(current: AudioSource? = nil) {
+    let current = current ?? session.source
     var apps = NSWorkspace.shared.runningApplications
       .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
       .compactMap { app -> (AudioSource, NSImage?)? in
@@ -144,20 +146,23 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate {
       .sorted { $0.0.name.localizedCaseInsensitiveCompare($1.0.name) == .orderedAscending }
     if !apps.contains(where: { $0.0 == current }) { apps.insert((current, nil), at: 0) }
     sourcePicker.removeAllItems()
-    for (source, icon) in apps {
-      sourcePicker.addItem(withTitle: source.name)
-      let item = sourcePicker.lastItem!
+    for (index, (source, icon)) in ([apps.first { $0.0 == current }!] + apps).enumerated() {
+      // Not addItem(withTitle:): it drops an existing item with the same title.
+      let item = NSMenuItem(title: source.name, action: nil, keyEquivalent: "")
+      sourcePicker.menu!.addItem(item)
       item.representedObject = source.bundleID
       icon?.size = NSSize(width: 16, height: 16)
       item.image = icon
-      if source == current { sourcePicker.select(item) }
+      item.state = index > 0 && source == current ? .on : .off
     }
+    sourcePicker.selectItem(at: 0)
   }
   @objc private func pickSource() {
     guard let item = sourcePicker.selectedItem, let id = item.representedObject as? String else { return }
     let source = AudioSource(bundleID: id, name: item.title)
     AudioSource.saved = source
     session.setSource(source)
+    fillSources(current: source)  // setSource is async; show the pick now
   }
   /// Neutral controls and a live stem splitter again, whatever state it was in.
   @objc private func resetButton() {
