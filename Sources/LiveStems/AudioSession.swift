@@ -53,11 +53,7 @@ final class AudioSession {
       description.muteBehavior = .unmuted
       try audioCheck(
         AudioHardwareCreateProcessTap(description, &tapID), "Cannot capture \(source.name)")
-      var a = audioAddress(kAudioTapPropertyFormat)
-      var format = AudioStreamBasicDescription()
-      var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-      try audioCheck(
-        AudioObjectGetPropertyData(tapID, &a, 0, nil, &size, &format), "Cannot read capture format")
+      let format = try tapFormat()
       guard format.mFormatID == kAudioFormatLinearPCM,
         format.mFormatFlags & kAudioFormatFlagIsFloat != 0, format.mBitsPerChannel == 32,
         format.mChannelsPerFrame == 2
@@ -97,6 +93,19 @@ final class AudioSession {
       throw error
     }
   }
+  private func tapFormat() throws -> AudioStreamBasicDescription {
+    var a = audioAddress(kAudioTapPropertyFormat)
+    var format = AudioStreamBasicDescription()
+    var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+    try audioCheck(
+      AudioObjectGetPropertyData(tapID, &a, 0, nil, &size, &format), "Cannot read capture format")
+    return format
+  }
+  /// The capture rate follows the output device (44.1, 48, 24 kHz for AirPods
+  /// with the mic on, ...). The converter and the core are built for `rate`.
+  var captureRateChanged: Bool { (try? tapFormat().mSampleRate) != rate }
+  /// AVAudioEngine stops itself when the output device's format changes.
+  var outputStopped: Bool { !engine.isRunning }
   /// Many apps play audio from helper processes: browsers (com.google.Chrome.helper,
   /// company.thebrowser.browser.helper) and Safari, whose audio comes from the
   /// shared WebKit GPU process. Tap the app, its helpers, and Safari's WebKit.
