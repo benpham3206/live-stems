@@ -68,7 +68,8 @@ shift lands on silence or a fresh start. Quit before takeover ends at once.
 
 If stems are wanted before any break, the session makes one: it sends Spotify
 "pause" over Apple Events, takes over when the paused state arrives, and sends
-"play". If no pause arrives within 2 s it takes over anyway, which leaves a
+"play" (always, even if the pause notice never came, so Spotify is never left
+paused). If no pause arrives within 2 s it takes over anyway, which leaves a
 0.3 s gap and never a replay. An earlier time-stretch ease (AVAudioUnitTimePitch,
 6 % then 1.5 %) was audible, especially on Bluetooth, and was removed.
 
@@ -88,6 +89,9 @@ Spotify state reads are stamped at the middle of the AppleScript call, when
 Spotify sampled the position. Stamping at publish time made slow reads (worse
 while a pause or play command shares the reader queue) look like seeks, which
 flushed playback. The skip-state stage checks the stamp with a 0.6 s read.
+A read samples the position at an unknown point inside a call that can take
+about 0.5 s, so a same-track position counts as a seek only beyond 1 s. A false
+seek flushes audible playback; a missed sub-second seek costs only model context.
 
 Within
 captured playback, Original and stems use the same source frames.

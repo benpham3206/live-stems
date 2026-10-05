@@ -160,7 +160,9 @@ final class SessionController {
         try audio.setOriginalSuppressed(true)
         pipeline.takeOverAtBreak()
         pipeline.step()
-        if selfPauseAt != nil, pipeline.paused { spotify?.command("play") }
+        // Always undo our own pause, even if its notice never came: the commands
+        // run in order on one queue, so Spotify can never be left paused by us.
+        if selfPauseAt != nil { spotify?.command("play") }
         selfPauseAt = nil
         audio.setOutputEnabled(true)
         outputOn = true

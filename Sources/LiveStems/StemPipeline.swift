@@ -128,7 +128,12 @@ final class StemPipeline {
         cut = true
         natural = old.isPlaying && value.isPlaying && old.duration > 0
           && abs(expected - old.duration) < 1.2 && value.position < 1.5
-      } else if abs(value.position - expected) > 0.35 { cut = true }
+      } else if abs(value.position - expected) > 1.0 {
+        // An AppleScript read samples the position at an unknown point inside a
+        // call that can take ~0.5 s, so smaller drift is read noise. A false seek
+        // flushes audible playback; a missed sub-second seek costs only context.
+        cut = true
+      }
     }
     let changedPause = paused != !value.isPlaying
     paused = !value.isPlaying
