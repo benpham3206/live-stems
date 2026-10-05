@@ -94,6 +94,123 @@ enum StreamMixerChecks {
       "accepted_results": pipeline.acceptedResults, "discarded": pipeline.discarded]
   }
 
+  // Worker-free proof that the model gets no jobs while resting or while
+  // Spotify is paused, and that waking can start a job at once.
+  static func resting() throws -> [String: Any] {
+    guard let core = ls_create(44100, 44100) else { throw StemError("Cannot allocate resting check core") }
+    defer { ls_destroy(core) }
+    let pipeline = StemPipeline(core: core)
+    pipeline.start(generation: 1)
+    func observe(playing: Bool) {
+      pipeline.observe(PlaybackSnapshot(trackID: "rest", title: "Rest", duration: 60,
+        position: 0, isPlaying: playing), hostTime: stemClock())
+    }
+    func drive(_ count: Int) {
+      pipeline.ingest((0..<count * 2).map { Float(sin(Double($0) * 0.01)) * 0.5 }, hostTime: stemClock())
+      pipeline.step()
+    }
+    observe(playing: true)
+    drive(88200)
+    pipeline.setResting(true)
+    let steadyBefore = pipeline.steadyFrames
+    drive(44100)
+    guard pipeline.job() == nil, pipeline.warmupWindow() == nil else {
+      throw StemError("Resting model was given a job")
+    }
+    guard pipeline.steadyFrames == steadyBefore else {
+      throw StemError("Resting frames were counted as steady stem frames")
+    }
+    pipeline.setResting(false)
+    guard pipeline.job() != nil else { throw StemError("Waking model could not start a job at once") }
+    observe(playing: false)
+    drive(4410)
+    guard pipeline.job() == nil, pipeline.warmupWindow() == nil else {
+      throw StemError("Paused Spotify still gave the model a job")
+    }
+    // While the model rests, frames have no stems. The mix must still follow
+    // the controls: equal gains give Original at that gain; otherwise only the
+    // stem-free part (Original at Other's gain) plays.
+    let frames = 14400
+    var fixture = [Float](repeating: 0, count: frames * 11)
+    for f in 0..<frames {
+      let v = Float(sin(Double(f) * 0.01)) * 0.3, b = Float(sin(Double(f) * 0.05)) * 0.4
+      fixture[f * 11] = v; fixture[f * 11 + 1] = v; fixture[f * 11 + 4] = b; fixture[f * 11 + 5] = b
+      fixture[f * 11 + 8] = v + b; fixture[f * 11 + 9] = v + b
+    }
+    let cases: [(String, [Float], UInt32, UInt32, Float)] = [
+      ("neutral", [1, 1, 1, 1], 0, 0, 1), ("all_muted", [1, 1, 1, 1], 15, 0, 0),
+      ("all_half", [0.5, 0.5, 0.5, 0.5], 0, 0, 0.5), ("bass_solo", [1, 1, 1, 1], 0, 4, 0),
+      ("vocals_muted", [1, 1, 1, 1], 1, 0, 1),
+    ]
+    var errors = [String: Double]()
+    for (name, gains, mute, solo, scale) in cases {
+      guard let mix = ls_create(48000, 48000) else { throw StemError("Cannot allocate resting mix core") }
+      defer { ls_destroy(mix) }
+      gains.withUnsafeBufferPointer { ls_controls(mix, $0.baseAddress, mute, solo) }
+      ls_enable(mix, 1)
+      _ = fixture.withUnsafeBufferPointer { ls_output_write(mix, $0.baseAddress, UInt32(frames)) }
+      let out = StreamE2E.readMix(mix, frames: frames).samples
+      errors[name] = (frames / 2..<frames).map { Double(abs(out[$0 * 2] - scale * fixture[$0 * 11 + 8])) }.max() ?? 1
+      guard errors[name]! < 1e-4 else { throw StemError("Resting mix \(name) did not follow the controls") }
+    }
+    return ["checked": true, "pass": true, "resting_mix_max_error": errors]
+  }
+  // Worker-free proof of the startup ease: playback starts at the live edge, the
+  // render (run at the pipeline's requested rate, as the time-pitch unit would)
+  // never underruns, repeats, or skips, and the delay grows to the steady value.
+  static func ease() throws -> [String: Any] {
+    guard let core = ls_create(44100, 44100) else { throw StemError("Cannot allocate ease check core") }
+    defer { ls_destroy(core) }
+    let pipeline = StemPipeline(core: core)
+    pipeline.start(generation: 1)
+    pipeline.observe(PlaybackSnapshot(trackID: "ease", title: "Ease", duration: 600,
+      position: 0, isPlaying: true), hostTime: stemClock())
+    // Each frame carries its own index: left = index % 1000, right = index / 1000 (scaled).
+    func tick() {
+      let from = pipeline.end
+      pipeline.ingest((0..<441).flatMap { f -> [Float] in
+        let index = from + f
+        return [Float(index % 1000) / 1000, Float(index / 1000) / 1000]
+      }, hostTime: stemClock())
+      pipeline.step()
+    }
+    for _ in 0..<30 { tick() }  // 300 ms of capture while Spotify still plays directly
+    let liveEdge = pipeline.end
+    pipeline.beginEase()
+    pipeline.step()
+    ls_enable(core, 1)
+    var rendered = [Int](), owed = 0.0, minRate: Float = 1, maxStep: Float = 0, lastRate = pipeline.easeRate
+    var endedAfter: Double?
+    for t in 0..<1500 {  // 15 s
+      tick()
+      minRate = min(minRate, pipeline.easeRate)
+      maxStep = max(maxStep, abs(pipeline.easeRate - lastRate)); lastRate = pipeline.easeRate
+      if endedAfter == nil, !pipeline.easing { endedAfter = Double(t) / 100 }
+      owed += 441 * Double(pipeline.easeRate)
+      let take = Int(owed); owed -= Double(take)
+      let out = StreamE2E.readMix(core, frames: take).samples
+      for f in 0..<take { rendered.append(Int((out[f * 2 + 1] * 1000).rounded()) * 1000 + Int((out[f * 2] * 1000).rounded())) }
+    }
+    let settled = Array(rendered.dropFirst(200))  // the 2.5 ms start envelope scales the first frames
+    let first = settled[0] - 200
+    let replay = liveEdge - first
+    let continuous = zip(settled, settled.dropFirst()).allSatisfy { $1 == $0 + 1 }
+    let finalLatency = pipeline.end - (rendered.last ?? 0)
+    let underruns = ls_underruns(core)
+    guard replay <= pipeline.easeCushionFrames + 441 else { throw StemError("Ease replayed \(replay) frames at handoff") }
+    guard continuous else { throw StemError("Ease render repeated or skipped a frame") }
+    guard underruns == 0 else { throw StemError("Ease render underran \(underruns) times") }
+    guard let ended = endedAfter, ended < 10 else { throw StemError("Ease did not finish within 10 s") }
+    guard abs(finalLatency - (pipeline.lagFrames + 2205)) <= 882 else {
+      throw StemError("Ease ended at latency \(finalLatency) frames")
+    }
+    guard minRate >= 1 - pipeline.easeMaxSlowdown - 0.0001, maxStep <= 0.0021 else {
+      throw StemError("Ease rate left its bounds: min \(minRate), step \(maxStep)")
+    }
+    return ["checked": true, "pass": true, "handoff_replay_ms": Double(replay) / 44.1,
+      "ease_seconds": ended, "final_latency_ms": Double(finalLatency) / 44.1,
+      "min_rate": minRate, "max_rate_step": maxStep, "underruns": underruns]
+  }
   static func sine(at frame: Int) -> Float {
     Float(sin(Double(frame) * 2 * .pi * 440 / 44100)) * 0.5
   }
@@ -163,6 +280,14 @@ enum StreamMixerChecks {
     _ = fixture.withUnsafeBufferPointer { ls_output_write(muteCore, $0.baseAddress, UInt32(frames)) }
     let muted = StreamE2E.readMix(muteCore, frames: frames).samples
     let mutePeak = muted.dropFirst(settle * 2).map { abs($0) }.max() ?? 0
+    // Meters are pre-fader: all-stem mute is silent but still shows the bass.
+    var meters: [Float] = [0, 0, 0, 0], cleared: [Float] = [0, 0, 0, 0]
+    ls_take_meters(muteCore, &meters)
+    ls_take_meters(muteCore, &cleared)
+    let bassSourcePeak = fixture.enumerated().filter { $0.offset % 11 == 4 || $0.offset % 11 == 5 }
+      .map { abs($0.element) }.max() ?? 0
+    let meterPass = bassSourcePeak > 0 && meters[2] > 0.5 * bassSourcePeak
+      && meters[2] <= bassSourcePeak + 1e-6 && cleared.allSatisfy { $0 == 0 }
 
     guard let toggleCore = ls_create(Double(rate), Double(rate)) else {
       throw StemError("Cannot allocate stem toggle controls core")
@@ -227,7 +352,7 @@ enum StreamMixerChecks {
       && bassRelative <= 1e-5 && mutePeak <= 1e-6
       && offOriginalError <= 1e-6 && toggleUnderruns == 0
       && limiterViolations == 0 && toggleStemPeak <= max(0.98, sourcePeak) + 1e-6
-      && onBassError <= 1e-6
+      && onBassError <= 1e-6 && meterPass
     return [
       "checked": true, "pass": pass,
       "neutral_relative_error": neutralRelative, "neutral_max_abs_error": neutralMax,
@@ -237,6 +362,7 @@ enum StreamMixerChecks {
       "raw_stem_sum_snr_db": snr, "toggle_on_bass_max_abs_error": onBassError, "toggle_stem_peak": toggleStemPeak,
       "source_peak": sourcePeak, "frames": frames,
       "persistent_controls": true, "bass_solo": true, "all_stem_mute": true,
+      "premute_bass_meter": meters[2], "bass_source_peak": bassSourcePeak, "meter_pass": meterPass,
     ]
   }
 

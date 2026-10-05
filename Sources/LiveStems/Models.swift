@@ -31,6 +31,13 @@ struct StemControls {
   var gains: [Float] = [1, 1, 1, 1]
   var mute: UInt32 = 0
   var solo: UInt32 = 0
+  /// Stem gains after mute and solo.
+  var effectiveGains: [Float] {
+    (0..<4).map { s in
+      let bit: UInt32 = 1 << UInt32(s)
+      return mute & bit != 0 || (solo != 0 && solo & bit == 0) ? 0 : gains[s]
+    }
+  }
 }
 enum LocalSettings {
   static let root: URL = {

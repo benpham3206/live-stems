@@ -64,7 +64,9 @@ enum MenuE2E {
     // Synthetic target/action clicks must not steal the user's foreground app.
     // The normal product initializer keeps activation enabled for real clicks.
     var quitCompletions = 0
-    let controller = MenuController(activateOnStatusClick: false, terminate: { quitCompletions += 1 })
+    var starts = 0
+    let controller = MenuController(
+      activateOnStatusClick: false, terminate: { quitCompletions += 1 }, start: { starts += 1 })
     guard let status = controller.e2eStatusButton,
       let window = controller.e2eWindow
     else { throw StemError("Menu E2E could not access the AppKit controls") }
@@ -127,6 +129,8 @@ enum MenuE2E {
       "app_active_after_click": app.isActive,
     ])
 
+    controller.e2eApplyStatusForTest(enabled: false)  // as after launch: nothing running yet
+    try require(starts == 0, "Live Stems started before any control needed stems")
     for label in ["Vocals Mute", "Vocals Solo"] {
       let button = try control(named: label, in: window)
       button.performClick(nil)
@@ -140,6 +144,20 @@ enum MenuE2E {
         "state": button.state == .on,
       ])
     }
+
+    try require(starts > 0, "The first Mute did not start Live Stems")
+    checks.append(["name": "first_control_starts", "starts": starts])
+    let bassSolo = try control(named: "Bass Solo", in: window)
+    bassSolo.performClick(nil)
+    pump()
+    let clearSolo = try control(named: "Clear all solos", in: window)
+    try require(clearSolo.state == .on, "Global solo did not light while stems were soloed")
+    clearSolo.performClick(nil)
+    pump()
+    let vocalsSolo = try control(named: "Vocals Solo", in: window)
+    try require(vocalsSolo.state == .off && bassSolo.state == .off && clearSolo.state == .off,
+      "Global solo did not clear every solo")
+    checks.append(["name": "global_solo_clears", "cleared": true])
 
     window.performClose(nil)
     pump()
@@ -155,6 +173,9 @@ enum MenuE2E {
     guard let content = window.contentView,
       let quit = descendants(of: content).compactMap({ $0 as? NSButton })
         .first(where: { $0.title == "Quit Live Stems" }) else { throw StemError("Quit button missing") }
+    let drumsMute = try control(named: "Drums Mute", in: window)
+    drumsMute.performClick(nil)
+    pump()
     quit.performClick(nil)
     pump()
     try require(!window.isVisible, "Quit kept controls visible")
@@ -165,10 +186,37 @@ enum MenuE2E {
     controller.reopen()
     pump()
     try require(window.isVisible, "Relay reopen did not restore controls")
+    try require(drumsMute.state == .off, "Quit did not reset the mix to Original")
     try require(controller.e2eStatusButton?.title == "Stems", "Relay reopen lost its status item")
     try require(app.isActive == launchActive, "Relay E2E stole app focus")
     checks.append(["name": "quit_and_reopen", "inactive_completion_count": quitCompletions,
       "readiness_stays_hidden": true, "reopen_visible": window.isVisible])
     return checks
+  }
+  static func snapshot(_ out: URL) throws {
+    // Draws the real controls panel to PNG, light and dark, without screen recording.
+    let controller = MenuController(activateOnStatusClick: false, terminate: {}, start: {})
+    guard let window = controller.e2eWindow, let view = window.contentView else {
+      throw StemError("Snapshot has no panel")
+    }
+    for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+      window.appearance = NSAppearance(named: look)
+      view.layoutSubtreeIfNeeded()
+      let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+      NSAppearance(named: look)!.performAsCurrentDrawingAppearance {
+        view.cacheDisplay(in: view.bounds, to: rep)
+      }
+      let image = NSImage(size: view.bounds.size)
+      image.addRepresentation(rep)
+      NSAppearance(named: look)!.performAsCurrentDrawingAppearance {
+        image.lockFocus()
+        NSColor.windowBackgroundColor.setFill()
+        view.bounds.fill(using: .destinationOver)
+        image.unlockFocus()
+      }
+      try NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
+        .write(to: out.appendingPathComponent("panel-\(name).png"))
+    }
+    print("PASS snapshot · panel-light.png, panel-dark.png")
   }
 }

@@ -138,9 +138,12 @@ final class SessionController {
         finishQuit()
         return
       }
-      if !outputOn, ls_queued(audio.core) >= 2205 {
-        // Direct Spotify continues during startup. Transfer only once the
-        // renderer has enough Original audio to leave its priming state.
+      audio.setPlaybackRate(pipeline.easeRate)
+      if !outputOn, pipeline.end - pipeline.base >= pipeline.easeCushionFrames + 441 {
+        // Direct Spotify continues during startup. Hand off at the live edge with
+        // a short cushion, then let the ease grow the delay: nothing repeats.
+        pipeline.beginEase()
+        pipeline.step()
         try audio.setOriginalSuppressed(true)
         audio.setOutputEnabled(true)
         outputOn = true
@@ -238,6 +241,8 @@ final class SessionController {
         ls_controls(core, $0.baseAddress, controls.mute, controls.solo)
       }
     }
+    // Equal effective gains render Original at that gain, so stems are not needed.
+    pipeline?.setResting(!stemsSelected || Set(controls.effectiveGains).count == 1)
   }
   func setControls(_ value: StemControls) {
     queue.async {
@@ -247,8 +252,23 @@ final class SessionController {
       self.applyControls()
     }
   }
+  /// Pre-fader stem peaks since the last call; zeros when no session runs.
+  func takeMeters(_ done: @escaping ([Float]) -> Void) {
+    queue.async {
+      var peaks: [Float] = [0, 0, 0, 0]
+      if let core = self.audio?.core { ls_take_meters(core, &peaks) }
+      DispatchQueue.main.async { done(peaks) }
+    }
+  }
   private func mixStatus(_ pipeline: StemPipeline) -> String {
-    if stemsSelected || pipeline.paused { return pipeline.statusText }
+    if pipeline.paused { return pipeline.statusText }
+    if !stemsSelected { return "Original mix · model asleep" }
+    if pipeline.resting {
+      let gain = controls.effectiveGains[0]
+      if gain == 0 { return "Muted · model asleep" }
+      return gain == 1 ? "Original · model asleep" : "Original at \(Int(gain * 100))% · model asleep"
+    }
+    return pipeline.statusText
     return "Original mix"
   }
   func toggleMix() {
@@ -258,11 +278,26 @@ final class SessionController {
       self.trace.record(TraceRecord(event: "mix", generation: pipeline.generation,
         sourceFrame: pipeline.outputPosition, stemsSelected: self.stemsSelected))
       ls_stems(audio.core, self.stemsSelected ? 1 : 0)
+      self.applyControls()
       if self.stemsSelected, self.worker == nil { self.startProcessor(token: self.token) }
       self.lastStatus = ""
       self.status(self.mixStatus(pipeline))
       self.saveDiagnostics()
     }
+  }
+  /// Back to the stem splitter from Original or a stopped worker: stems are
+  /// selected, a worker starts if none runs, and Original fades into stems.
+  func restoreStems() { queue.async { self.selectStems() } }
+  private func selectStems() {
+    guard enabled, let audio = audio, let pipeline = pipeline else { return }
+    stemsSelected = true
+    ls_stems(audio.core, 1)
+    trace.record(TraceRecord(event: "mix", generation: pipeline.generation,
+      sourceFrame: pipeline.outputPosition, stemsSelected: true))
+    applyControls()
+    if worker == nil { startProcessor(token: token) }
+    lastStatus = ""
+    status(mixStatus(pipeline))
   }
   func useLiveSpotify() {
     queue.async {
@@ -297,7 +332,7 @@ final class SessionController {
       observedCaptureToRenderSeconds: observedAge,
       fallbacks: p.fallbacks, paused: p.paused, blendWeight: p.weight,
       cacheBytes: p.cacheBytes, cacheLimitBytes: p.memoryLimit, jumps: p.jumps, hardCuts: p.hardCuts,
-      stemsSelected: stemsSelected, windowFrames: p.windowFrames, hopFrames: p.hop,
+      stemsSelected: stemsSelected, modelResting: p.resting, easing: p.easing, windowFrames: p.windowFrames, hopFrames: p.hop,
       lateResults: p.lateResults, acceptedResults: p.acceptedResults,
       steadyFrames: p.steadyFrames, steadyFullStemFrames: p.steadyFullStemFrames,
       steadyFallbackFrames: p.steadyFallbackFrames, steadyProvisionalFrames: p.steadyProvisionalFrames
@@ -355,10 +390,9 @@ final class SessionController {
       self.quitVersion &+= 1
       self.quitCompletion = nil
       guard self.enabled else { return }
-      self.lastStatus = ""
-      self.status("Original mix · processor stopped")
       self.trace.record(TraceRecord(event: "quit-reopen", generation: self.token,
         sourceFrame: self.pipeline?.outputPosition))
+      self.selectStems()
     }
   }
   private func finishQuit() {

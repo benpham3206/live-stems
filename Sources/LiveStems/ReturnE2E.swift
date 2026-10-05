@@ -32,6 +32,7 @@ enum ReturnE2E {
     }
     do {
       session.start()
+      session.setControls(StemControls(gains: [0.9, 1, 1, 1]))  // a neutral mix sleeps the model
       let initial = try wait(35) {
         $0.active && $0.handedOff && !$0.paused && $0.acceptedResults >= 10
           && $0.capturePeak > 0.001 && $0.workerPID > 0

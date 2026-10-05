@@ -37,6 +37,7 @@ enum QuitE2E {
     }
     do {
       session.start()
+      session.setControls(StemControls(gains: [0.9, 1, 1, 1]))  // a neutral mix sleeps the model
       let initial = try wait(35) { $0.active && $0.handedOff && $0.acceptedResults >= 10 && $0.capturePeak > 0.001 }
       session.quit { completions += 1 }
       let relay = try wait(5) { $0.active && $0.workerPID == 0 && !$0.stemsSelected }
@@ -45,8 +46,7 @@ enum QuitE2E {
         later.hardCuts == initial.hardCuts, kill(initial.workerPID, 0) != 0 else {
         throw StemError("Quit stopped the source clock, kept AI, or ended while playing")
       }
-      session.cancelQuit()
-      session.toggleMix()
+      session.cancelQuit()  // reopening restores stems and a fresh worker
       let resumed = try wait(35) { $0.active && $0.workerPID > 0 && $0.stemsSelected && $0.blendWeight > 0.9 }
       guard completions == 0, resumed.sessionGeneration == initial.sessionGeneration else {
         throw StemError("Reopening the relay restarted the audio session")
@@ -67,7 +67,7 @@ enum QuitE2E {
         try JSONDecoder().decode(TraceRecord.self, from: Data($0.utf8))
       }
       guard let handoff = records.first(where: { $0.event == "handoff" }),
-        (handoff.queuedFrames ?? 0) >= 2205 else { throw StemError("Startup suppressed an unprimed queue") }
+        (handoff.queuedFrames ?? 0) >= 662 else { throw StemError("Startup suppressed an unprimed queue") }
       let renders = records.filter { $0.event == "sample" }.compactMap(\.renderedFrame)
       guard renders.count >= 10, zip(renders, renders.dropFirst()).allSatisfy({ $1 >= $0 }) else {
         throw StemError("Quit or reopen moved the render clock backward")

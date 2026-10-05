@@ -133,6 +133,17 @@ enum NativeE2E {
       try StreamE2E.run(out)
     case "recovery":
       try recovery(out)
+    case "snapshot":
+      try MenuE2E.snapshot(out)
+    case "ease":
+      let report = try StreamMixerChecks.ease()
+      try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+        .write(to: out.appendingPathComponent("ease.json"))
+      print("PASS ease · \(report)")
+    case "rest":
+      let report = try StreamMixerChecks.resting()
+      try JSONSerialization.data(withJSONObject: report).write(to: out.appendingPathComponent("rest.json"))
+      print("PASS rest · no jobs while resting or paused; wake starts a job")
     case "sustained":
       throw StemError(
         "Use the live session acceptance monitor for sustained capture; offline E2E is not live acceptance"

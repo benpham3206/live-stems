@@ -22,9 +22,13 @@ float ls_rendered_stem_weight(LSCore * _Null_unspecified core);
 uint32_t ls_read_mix(LSCore * _Null_unspecified core, float * _Null_unspecified samples, uint32_t frames);
 void ls_reset(LSCore * _Null_unspecified core);
 void ls_enable(LSCore * _Null_unspecified core, int enabled);
+// Frames queued before playback starts or resumes after an underrun; 0 restores the 50 ms default.
+void ls_set_prime(LSCore * _Null_unspecified core, uint32_t frames);
 // Changes the mix on the queued timeline. It never resets or flushes playback.
 void ls_stems(LSCore * _Null_unspecified core, int enabled);
 void ls_controls(LSCore * _Null_unspecified core, const float * _Null_unspecified gains, uint32_t mute, uint32_t solo);
+// Takes and clears the four pre-fader stem peaks rendered since the last call.
+void ls_take_meters(LSCore * _Null_unspecified core, float * _Null_unspecified peaks);
 uint64_t ls_played(LSCore * _Null_unspecified core);
 uint64_t ls_underruns(LSCore * _Null_unspecified core);
 uint64_t ls_overflows(LSCore * _Null_unspecified core);

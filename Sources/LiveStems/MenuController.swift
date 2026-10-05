@@ -8,21 +8,34 @@ final class MenuController: NSObject, NSWindowDelegate {
   private let activatesOnStatusClick: Bool
   private let terminate: () -> Void
   private let window = NSWindow(
-    contentRect: NSRect(x: 0, y: 0, width: 330, height: 430),
+    contentRect: NSRect(x: 0, y: 0, width: 330, height: 426),
     styleMask: [.titled, .closable], backing: .buffered,
     defer: false)
   private let windowLog = Logger(subsystem: "com.benpham.livestems", category: "Windowing")
   private let statusLabel = NSTextField(labelWithString: "Live Spotify · original"),
     outputLabel = NSTextField(labelWithString: ""),
-    startButton = NSButton(title: "Enable live stems", target: nil, action: nil),
-    liveButton = NSButton(title: "Return to live Spotify", target: nil, action: nil)
+    startButton = NSButton(title: "Reset", target: nil, action: nil)
   private var active = false, panelRequested = true, controls = StemControls()
+  private var muteButtons: [NSButton] = [], soloButtons: [NSButton] = [], sliders: [NSSlider] = []
+  private var waveforms: [StemWaveform] = []
+  private var muteAllButton: NSButton!, clearSoloButton: NSButton!
+  private var meterTimer: Timer?
+  /// First symbol name this macOS has, so newer SF Symbols fall back on older systems.
+  private static func symbol(_ names: [String]) -> NSImage {
+    names.lazy.compactMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }.first ?? NSImage()
+  }
+  private static let muteColor = NSColor(srgbRed: 0.29, green: 0.62, blue: 1, alpha: 1)
+  private static let soloColor = NSColor(srgbRed: 1, green: 0.82, blue: 0.2, alpha: 1)
   override convenience init() {
     self.init(activateOnStatusClick: true)
   }
-  init(activateOnStatusClick: Bool, terminate: @escaping () -> Void = { NSApp.terminate(nil) }) {
+  private let startOverride: (() -> Void)?
+  /// `start` replaces the session start; the menu E2E counts starts without capturing audio.
+  init(activateOnStatusClick: Bool, terminate: @escaping () -> Void = { NSApp.terminate(nil) },
+    start: (() -> Void)? = nil) {
     self.activatesOnStatusClick = activateOnStatusClick
     self.terminate = terminate
+    self.startOverride = start
     super.init()
     configureStatusItem()
     window.title = "Live Stems"
@@ -30,23 +43,38 @@ final class MenuController: NSObject, NSWindowDelegate {
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     window.delegate = self
     window.level = .floating
-    let content = NSView(frame: NSRect(x: 0, y: 0, width: 330, height: 430))
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 330, height: 426))
     window.contentView = content
-    statusLabel.frame = NSRect(x: 16, y: 397, width: 298, height: 20)
+    statusLabel.frame = NSRect(x: 16, y: 393, width: 298, height: 20)
     content.addSubview(statusLabel)
-    outputLabel.frame = NSRect(x: 16, y: 375, width: 298, height: 18)
+    outputLabel.frame = NSRect(x: 16, y: 371, width: 298, height: 18)
     outputLabel.font = .systemFont(ofSize: 11)
     content.addSubview(outputLabel)
-    startButton.frame = NSRect(x: 12, y: 337, width: 306, height: 30)
+    startButton.frame = NSRect(x: 12, y: 333, width: 306, height: 30)
     startButton.target = self
-    startButton.action = #selector(toggle)
+    startButton.action = #selector(resetButton)
     startButton.bezelStyle = .rounded
+    startButton.image = Self.symbol(["arrow.counterclockwise"])
+    startButton.imagePosition = .imageLeading
     content.addSubview(startButton)
+    let stemColors: [NSColor] = [.systemPink, .systemOrange, .systemPurple, .systemGreen]
+    // SF Symbols has no drum; a transient waveform stands in. The stand mic is new in SF Symbols 8.
+    let stemSymbols = [["microphone.dynamic.on.stand", "microphone.fill"], ["waveform.path"],
+      ["guitars.fill"], ["sparkles"]]
     for (index, name) in ["Vocals", "Drums", "Bass", "Other"].enumerated() {
-      let row = NSView(frame: NSRect(x: 0, y: 273 - index * 64, width: 330, height: 64))
+      let row = NSView(frame: NSRect(x: 0, y: 269 - index * 64, width: 330, height: 64))
+      let icon = NSImageView(image: Self.symbol(stemSymbols[index]))
+      icon.contentTintColor = stemColors[index]
+      icon.frame = NSRect(x: 14, y: 38, width: 20, height: 20)
+      row.addSubview(icon)
       let label = NSTextField(labelWithString: name)
-      label.frame = NSRect(x: 16, y: 38, width: 100, height: 20)
+      label.frame = NSRect(x: 38, y: 38, width: 56, height: 20)
       row.addSubview(label)
+      let waveform = StemWaveform(color: stemColors[index])
+      waveform.frame = NSRect(x: 96, y: 36, width: 158, height: 22)
+      waveform.setAccessibilityLabel(name + " waveform")
+      row.addSubview(waveform)
+      waveforms.append(waveform)
       let slider = NSSlider(
         value: 1, minValue: 0, maxValue: 1, target: self, action: #selector(slide(_:)))
       slider.tag = index
@@ -54,24 +82,41 @@ final class MenuController: NSObject, NSWindowDelegate {
       slider.frame = NSRect(x: 16, y: 9, width: 298, height: 22)
       slider.setAccessibilityLabel(name + " volume")
       row.addSubview(slider)
+      sliders.append(slider)
       for (offset, title) in ["Mute", "Solo"].enumerated() {
-        let button = NSButton(checkboxWithTitle: title, target: self, action: #selector(check(_:)))
+        let button = LogicToggle(
+          letter: String(title.prefix(1)), lit: offset == 0 ? Self.muteColor : Self.soloColor,
+          target: self, action: #selector(check(_:)))
         button.tag = index + offset * 4
-        button.frame = NSRect(x: 166 + offset * 74, y: 36, width: 74, height: 22)
+        button.frame = NSRect(x: 262 + offset * 28, y: 36, width: 24, height: 22)
         button.setAccessibilityLabel(name + " " + title)
+        button.toolTip = title
         row.addSubview(button)
+        if offset == 0 { muteButtons.append(button) } else { soloButtons.append(button) }
       }
       content.addSubview(row)
     }
-    liveButton.frame = NSRect(x: 12, y: 42, width: 306, height: 30)
-    liveButton.bezelStyle = .rounded
-    liveButton.target = self
-    liveButton.action = #selector(returnToLive)
-    liveButton.isEnabled = false
-    content.addSubview(liveButton)
+    let allLabel = NSTextField(labelWithString: "All stems")
+    allLabel.frame = NSRect(x: 16, y: 51, width: 100, height: 20)
+    content.addSubview(allLabel)
+    muteAllButton = LogicToggle(
+      letter: "M", lit: Self.muteColor, target: self, action: #selector(muteAll(_:)))
+    muteAllButton.frame = NSRect(x: 262, y: 50, width: 24, height: 22)
+    muteAllButton.setAccessibilityLabel("Mute all")
+    muteAllButton.toolTip = "Mute all stems"
+    content.addSubview(muteAllButton)
+    // Logic-style global solo: lit while any stem is soloed; a click clears them all.
+    clearSoloButton = LogicToggle(
+      letter: "S", lit: Self.soloColor, target: self, action: #selector(clearSolos))
+    clearSoloButton.frame = NSRect(x: 290, y: 50, width: 24, height: 22)
+    clearSoloButton.setAccessibilityLabel("Clear all solos")
+    clearSoloButton.toolTip = "Clear all solos"
+    content.addSubview(clearSoloButton)
     let quit = NSButton(title: "Quit Live Stems", target: self, action: #selector(quitApp))
     quit.frame = NSRect(x: 12, y: 8, width: 306, height: 30)
     quit.bezelStyle = .rounded
+    quit.image = Self.symbol(["power"])
+    quit.imagePosition = .imageLeading
     content.addSubview(quit)
     outputLabel.stringValue = "Output: " + outputName(defaultOutput())
     session.onReady = { [weak self] in
@@ -85,6 +130,14 @@ final class MenuController: NSObject, NSWindowDelegate {
     session.onStatus = { [weak self] text, output, enabled, stems in
       self?.applyStatus(text: text, output: output, enabled: enabled, stems: stems)
     }
+    // 30 Hz meter pull; it reads nothing while the controls are hidden.
+    meterTimer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+      guard let self, self.window.isVisible else { return }
+      self.session.takeMeters { peaks in
+        for (waveform, peak) in zip(self.waveforms, peaks) { waveform.push(peak) }
+      }
+    }
+    RunLoop.main.add(meterTimer!, forMode: .common)
     // The first launch shows the controls without making the app frontmost.
     presentWindow(reason: "launch", userInitiated: false)
   }
@@ -99,8 +152,6 @@ final class MenuController: NSObject, NSWindowDelegate {
     statusLabel.stringValue = text
     statusLabel.toolTip = text
     outputLabel.stringValue = "Output: " + output
-    startButton.title = enabled ? (stems ? "Use original mix" : "Use stems") : "Enable live stems"
-    liveButton.isEnabled = enabled
     item.button?.title = "Stems"
   }
   private func positionWindow() {
@@ -132,11 +183,21 @@ final class MenuController: NSObject, NSWindowDelegate {
       "Windowing close event=windowWillClose visible=\(self.window.isVisible, privacy: .public) appActive=\(NSApp.isActive, privacy: .public)"
     )
   }
-  @objc private func toggle() { if active { session.toggleMix() } else { session.start() } }
-  @objc private func returnToLive() { session.useLiveSpotify() }
+  /// Neutral controls and a live stem splitter again, whatever state it was in.
+  @objc private func resetButton() {
+    resetControls()
+    session.restoreStems()
+  }
+  /// Full volume, no mute or solo: Original, so the model sleeps.
+  private func resetControls() {
+    controls = StemControls()
+    for slider in sliders { slider.floatValue = 1 }
+    for button in muteButtons + soloButtons { button.state = .off }
+    applyControls()
+  }
   @objc private func slide(_ sender: NSSlider) {
     controls.gains[sender.tag] = sender.floatValue
-    session.setControls(controls)
+    applyControls()
   }
   @objc private func check(_ sender: NSButton) {
     let mask: UInt32 = 1 << UInt32(sender.tag % 4)
@@ -145,7 +206,25 @@ final class MenuController: NSObject, NSWindowDelegate {
     } else {
       if sender.state == .on { controls.solo |= mask } else { controls.solo &= ~mask }
     }
+    applyControls()
+  }
+  @objc private func muteAll(_ sender: NSButton) {
+    controls.mute = sender.state == .on ? 0b1111 : 0
+    for button in muteButtons { button.state = sender.state }
+    applyControls()
+  }
+  @objc private func clearSolos() {
+    controls.solo = 0
+    for button in soloButtons { button.state = .off }
+    applyControls()
+  }
+  private func applyControls() {
+    muteAllButton.state = controls.mute == 0b1111 ? .on : .off
+    clearSoloButton.state = controls.solo != 0 ? .on : .off
+    for (waveform, gain) in zip(waveforms, controls.effectiveGains) { waveform.dimmed = gain == 0 }
     session.setControls(controls)
+    // No enable step: the first mix that needs stems starts Live Stems.
+    if !active, Set(controls.effectiveGains).count > 1 { (startOverride ?? session.start)() }
   }
   private func configureStatusItem() {
     item.button?.title = "Stems"
@@ -160,6 +239,7 @@ final class MenuController: NSObject, NSWindowDelegate {
     panelRequested = false
     window.orderOut(nil)
     NSStatusBar.system.removeStatusItem(item)
+    resetControls()  // a reopen starts from Original with the model asleep
     session.quit(completion: terminate)
   }
   func reopen() {
