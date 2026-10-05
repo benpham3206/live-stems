@@ -15,23 +15,14 @@ enum ReturnE2E {
       source: sourceID.map { AudioSource(bundleID: $0, name: $0) } ?? .spotify)
     var stopped = false
     defer { if !stopped { session.shutdownSync() } }
-    let path = LocalSettings.evidence.appendingPathComponent("active-session.json")
+    let probe = LiveSessionProbe(timeoutMessage: "Return scenario timed out; leave Spotify playing")
     var snapshots = [SessionDiagnostics]()
     let began = stemClock()
-    func read() -> SessionDiagnostics? {
-      guard let data = try? Data(contentsOf: path),
-        let state = try? JSONDecoder().decode(SessionDiagnostics.self, from: data),
-        state.appPID == ProcessInfo.processInfo.processIdentifier,
-        stemClock() - state.observedUptime < 3 else { return nil }
-      return state
-    }
+    let read = probe.read
     func wait(_ seconds: Double, _ condition: (SessionDiagnostics) -> Bool) throws -> SessionDiagnostics {
-      let deadline = stemClock() + seconds
-      repeat {
-        if let state = read(), condition(state) { snapshots.append(state); return state }
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
-      } while stemClock() < deadline
-      throw StemError("Return scenario timed out; leave Spotify playing")
+      let state = try probe.wait(seconds, condition)
+      snapshots.append(state)
+      return state
     }
     do {
       session.start()
