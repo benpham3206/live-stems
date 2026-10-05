@@ -28,13 +28,11 @@ func outputName(_ id: AudioObjectID) -> String {
 final class AudioSession {
   private(set) var core: OpaquePointer!
   private(set) var rate = 48000.0
-  let outputID = defaultOutput()
+  private(set) var outputID = defaultOutput()
   var name: String { outputName(outputID) }
   private var tapID: AudioObjectID = 0, aggregate: AudioObjectID = 0, ioProc: AudioDeviceIOProcID?
   private let description = CATapDescription(), engine = AVAudioEngine()
   private var node: AVAudioSourceNode?, converter: AVAudioConverter?
-  // Bit-exact at rate 1; the startup ease runs it slightly slow, pitch kept.
-  private let timePitch = AVAudioUnitTimePitch()
   private var inputFormat: AVAudioFormat!,
     modelFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
   private var started = false
@@ -91,25 +89,34 @@ final class AudioSession {
         return noErr
       }
       engine.attach(node!)
-      engine.attach(timePitch)
-      engine.connect(node!, to: timePitch, format: modelFormat)
-      engine.connect(timePitch, to: engine.mainMixerNode, format: modelFormat)
-      // Audio already handed to the device survives a flush. A small
-      // per-process IO buffer bounds that old-audio leak after a skip.
-      if let unit = engine.outputNode.audioUnit {
-        var frames = UInt32(64)
-        AudioUnitSetProperty(unit, kAudioDevicePropertyBufferFrameSize, kAudioUnitScope_Global, 0,
-          &frames, UInt32(MemoryLayout<UInt32>.size))
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        AudioUnitGetProperty(unit, kAudioDevicePropertyBufferFrameSize, kAudioUnitScope_Global, 0,
-          &frames, &size)
-        outputBufferFrames = frames
-      }
+      engine.connect(node!, to: engine.mainMixerNode, format: modelFormat)
+      setSmallOutputBuffer()
       engine.prepare()
     } catch {
       stop()
       throw error
     }
+  }
+  // Audio already handed to the device survives a flush. A small
+  // per-process IO buffer bounds that old-audio leak after a skip.
+  private func setSmallOutputBuffer() {
+    guard let unit = engine.outputNode.audioUnit else { return }
+    var frames = UInt32(64)
+    AudioUnitSetProperty(unit, kAudioDevicePropertyBufferFrameSize, kAudioUnitScope_Global, 0,
+      &frames, UInt32(MemoryLayout<UInt32>.size))
+    var size = UInt32(MemoryLayout<UInt32>.size)
+    AudioUnitGetProperty(unit, kAudioDevicePropertyBufferFrameSize, kAudioUnitScope_Global, 0,
+      &frames, &size)
+    outputBufferFrames = frames
+  }
+  /// Move playback to the new default output (headphones, speakers). Capture,
+  /// the queue, and the delay stay, so no new takeover is needed.
+  func followOutput() throws {
+    outputID = defaultOutput()
+    engine.stop()
+    engine.reset()
+    setSmallOutputBuffer()
+    try engine.start()
   }
   func start() throws {
     do {
@@ -133,9 +140,6 @@ final class AudioSession {
           tapID, &a, 0, nil, UInt32(MemoryLayout<CATapDescription>.size), $0),
         "Cannot switch Spotify playback")
     }
-  }
-  func setPlaybackRate(_ value: Float) {
-    if timePitch.rate != value { timePitch.rate = value }
   }
   func setOutputEnabled(_ value: Bool) {
     if let c = core { ls_enable(c, value ? 1 : 0) }

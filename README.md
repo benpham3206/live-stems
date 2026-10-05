@@ -95,9 +95,9 @@ Live Stems takes over from Spotify at the next pause, skip, or seek, so you neve
 The status line says *Spotify direct · ready at the next pause, skip, or seek* until then. After
 that, any change to the mix fades in within about a second.
 
-If you change the mix before any break, Live Stems eases in instead: the song plays up to 1.5 %
-slower (pitch unchanged, too little to notice) for about 20 seconds, and the stems arrive after
-about 15 seconds. To skip the wait, pause and resume once.
+If you change the mix before any break, Live Stems makes one: it pauses Spotify for a blink, takes
+over in that silence, and presses play again. The song never slows down or repeats. Switching
+headphones or speakers keeps Live Stems running, so the takeover happens only once.
 
 ## Using it
 
@@ -137,7 +137,6 @@ The details, numbers and test plan are in [docs/internals.md](docs/internals.md)
 | Build says *"The local Python environment is missing"* | Redo [step 2](#2-set-up-python-and-the-model). The folder layout from step 1 must match exactly. |
 | macOS asks for audio permission after every update | The app's signature changed. Check that `work/live-stems-signing-identity.txt` still names your certificate. |
 | Status says *"Spotify capture silent · live Spotify restored"* | Spotify was silent for 10 seconds after Live Stems started. Play something, then change any control. |
-| Status says *"Output changed · live Spotify restored"* | You switched speakers or headphones. Change any control to start again. |
 | Stems drop out for a moment now and then | The GPU is busy with something else (games, video, editing apps). Live Stems plays the plain song for that moment rather than glitching. |
 | The screen flickers and Live Stems stops | macOS restarted the GPU. Save the files named `gpuEvent-*` in `/Library/Logs/DiagnosticReports` and open an issue. |
 

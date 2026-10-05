@@ -28,7 +28,6 @@ struct SessionDiagnostics: Codable {
   var hardCuts: Int
   var stemsSelected: Bool
   var modelResting: Bool
-  var easing: Bool
   var windowFrames: Int
   var hopFrames: Int
   var lateResults: Int

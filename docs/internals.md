@@ -66,19 +66,22 @@ a track change or seek notice. Takeover discards everything already heard, so
 playback resumes from that point after the steady lag and nothing repeats; the
 shift lands on silence or a fresh start. Quit before takeover ends at once.
 
-If stems are wanted before any break, the fallback takes over at the live edge
-with a 30 ms cushion and a 15 ms prime, then runs an AVAudioUnitTimePitch slow
-(pitch kept, at most 1.5 %, rate change at most 0.2 % per 10 ms step) until
-capture-to-render reaches the steady lag plus its 50 ms queue, about 19 s. A
-6 % ease was audible in listening tests. The unit is bit-exact at rate 1. A
-skip, seek, or pause during the ease ends it.
+If stems are wanted before any break, the session makes one: it sends Spotify
+"pause" over Apple Events, takes over when the paused state arrives, and sends
+"play". If no pause arrives within 2 s it takes over anyway, which leaves a
+0.3 s gap and never a replay. An earlier time-stretch ease (AVAudioUnitTimePitch,
+6 % then 1.5 %) was audible, especially on Bluetooth, and was removed.
+
+A change of default output moves the AVAudioEngine output to the new device.
+Capture, the queue, and the delay stay, so no second takeover happens.
 
 Stems enter only after three results in a row arrive fully on time, then fade
-in over 200 ms. A coverage gap closes that gate again. Without it, partly late
-results during the ease made stems flicker against Original about ten times a
-second. The `ease` stage checks the fallback with a 70 ms simulated worker; the
-`transitions` stage checks both takeovers. Within captured playback, Original
-and stems use the same source frames.
+in over 200 ms. A coverage gap closes that gate again and fades stems out while
+stem data remains. Without it, partly late results made stems flicker against
+Original about ten times a second. The `flutter` stage checks this with a
+simulated worker whose every other answer is late (with the gate removed, stems
+enter 22 times in 12 s; with it, once, after the worker recovers). Within
+captured playback, Original and stems use the same source frames.
 
 Capture history is bounded to three seconds and compacts to two seconds. Ready
 stem data has an 8 MiB bound. No song library or long track cache is retained.
@@ -150,8 +153,8 @@ Spotify is paused, and that the resting mix follows the controls.
 
 The `transitions` stage needs no worker. It runs 25 seeds of random skips,
 seeks, pauses, duplicate notices, model sleep and wake, late results, and the
-startup ease. Playback must never go backward, must start within 20 ms of the
-handoff from the live edge, must not underrun outside a transition, and must
+takeover (break or self-pause). Playback must never go backward, must replay
+nothing at takeover, must not underrun outside a transition, and must
 settle at the steady delay.
 
 The signed `quit` stage checks actual capture, worker exit, Original relay,

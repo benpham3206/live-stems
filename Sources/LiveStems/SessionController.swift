@@ -12,6 +12,7 @@ final class SessionController {
   private var token: UInt64 = 0, job: UInt64 = 0, busy = false, enabled = false,
     outputOn = false, stemsSelected = true, warmupsLeft = 0
   private var awaitingFirstAudio = false, cutHost = 0.0
+  private var selfPauseAt: Double?  // when Live Stems paused Spotify to make a takeover break
   private var controls = StemControls(), began = 0.0, capturePeak: Float = 0,
     lastCaptureEndHost = 0.0
   private var lastDeviceCheck = 0.0, lastDiagnostics = 0.0, lastStatus = ""
@@ -114,8 +115,12 @@ final class SessionController {
     do {
       if stemClock() - lastDeviceCheck > 0.5 {
         lastDeviceCheck = stemClock()
-        guard defaultOutput() == audio.outputID else {
-          throw StemError("Output changed · live Spotify restored")
+        if defaultOutput() != audio.outputID {
+          // Follow headphones or speakers; capture and the delay stay, so no new takeover.
+          try audio.followOutput()
+          trace.record(TraceRecord(event: "output-change", generation: token,
+            sourceFrame: pipeline.outputPosition, outputBufferFrames: audio.outputBufferFrames))
+          self.status(mixStatus(pipeline))
         }
       }
       let samples = try audio.drain()
@@ -139,17 +144,24 @@ final class SessionController {
         finishQuit()
         return
       }
-      audio.setPlaybackRate(pipeline.easeRate)
       // Direct Spotify plays until a natural break (pause, skip, seek), where the
-      // 0.3 s shift is silent. Stems wanted before then: take over at the live
-      // edge and grow the delay with a gentle ease instead. Nothing repeats.
+      // 0.3 s shift is silent. Stems wanted before then: make a break by pausing
+      // Spotify, take over in that silence, and press play again. If no pause
+      // arrives within 2 s, take over anyway (a 0.3 s gap, never a replay).
       let atBreak = pipeline.paused || pipeline.breakPending
-      let eased = !pipeline.resting && pipeline.end - pipeline.base >= pipeline.easeCushionFrames + 441
-      if !outputOn, atBreak || eased {
+      if !outputOn, !pipeline.resting, !atBreak, selfPauseAt == nil {
+        selfPauseAt = stemClock()
+        spotify?.command("pause")
+        trace.record(TraceRecord(event: "self-pause", generation: token, sourceFrame: pipeline.end))
+      }
+      let pauseTimedOut = selfPauseAt.map { stemClock() - $0 > 2 } ?? false
+      if !outputOn, atBreak || pauseTimedOut {
         // Mute first: if macOS refuses, nothing has moved yet.
         try audio.setOriginalSuppressed(true)
-        if atBreak { pipeline.takeOverAtBreak() } else { pipeline.beginEase() }
+        pipeline.takeOverAtBreak()
         pipeline.step()
+        if selfPauseAt != nil, pipeline.paused { spotify?.command("play") }
+        selfPauseAt = nil
         audio.setOutputEnabled(true)
         outputOn = true
         trace.record(TraceRecord(event: "handoff", generation: token,
@@ -337,7 +349,7 @@ final class SessionController {
       observedCaptureToRenderSeconds: observedAge,
       fallbacks: p.fallbacks, paused: p.paused, blendWeight: p.weight,
       cacheBytes: p.cacheBytes, cacheLimitBytes: p.memoryLimit, jumps: p.jumps, hardCuts: p.hardCuts,
-      stemsSelected: stemsSelected, modelResting: p.resting, easing: p.easing, windowFrames: p.windowFrames, hopFrames: p.hop,
+      stemsSelected: stemsSelected, modelResting: p.resting, windowFrames: p.windowFrames, hopFrames: p.hop,
       lateResults: p.lateResults, acceptedResults: p.acceptedResults,
       steadyFrames: p.steadyFrames, steadyFullStemFrames: p.steadyFullStemFrames,
       steadyFallbackFrames: p.steadyFallbackFrames, steadyProvisionalFrames: p.steadyProvisionalFrames

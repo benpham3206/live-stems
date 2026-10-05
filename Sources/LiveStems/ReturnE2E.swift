@@ -63,13 +63,12 @@ enum ReturnE2E {
         throw StemError("Rapid Return/restart changed the session or source clock")
       }
       session.shutdownSync(); stopped = true
-      var samples = [TraceRecord](), easeEnd = Double.infinity
+      var samples = [TraceRecord]()
       for name in ["live-trace.previous.jsonl", "live-trace.jsonl"] {
         guard let data = try? Data(contentsOf: out.appendingPathComponent(name)) else { continue }
         for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
           let record = try JSONDecoder().decode(TraceRecord.self, from: Data(line.utf8))
           if record.event == "sample", record.renderedFrame != nil { samples.append(record) }
-          if record.event == "ease-end" { easeEnd = min(easeEnd, record.uptime) }
         }
       }
       guard samples.count >= 10 else { throw StemError("Return lacked actual render trace samples") }
@@ -78,10 +77,8 @@ enum ReturnE2E {
           throw StemError("Return moved the rendered source frame backward")
         }
       }
-      // The startup ease grows the delay on purpose; the steady range applies after it.
-      let steady = samples.filter { $0.uptime > easeEnd }
-      let ages = steady.compactMap(\.estimatedCaptureToRenderSeconds)
-      guard steady.count >= 5, ages.count == steady.count, ages.allSatisfy({ $0 >= 0.2 && $0 <= 0.45 }) else {
+      let ages = samples.compactMap(\.estimatedCaptureToRenderSeconds)
+      guard ages.count == samples.count, ages.allSatisfy({ $0 >= 0.2 && $0 <= 0.45 }) else {
         throw StemError("Return changed observed capture-to-render age: \(ages.min() ?? -1)…\(ages.max() ?? -1)")
       }
       try JSONEncoder().encode(snapshots).write(to: out.appendingPathComponent("return-snapshots.json"))

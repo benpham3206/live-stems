@@ -184,6 +184,14 @@ final class SpotifyState {
     return nil
   }
 
+  /// Sends a transport command ("pause", "play") to Spotify. Runs on the reader
+  /// queue so it never overlaps another AppleScript call.
+  func command(_ verb: String) {
+    readerQueue.async {
+      var error: NSDictionary?
+      NSAppleScript(source: "tell application \"Spotify\" to \(verb)")?.executeAndReturnError(&error)
+    }
+  }
   private static func readSnapshot() throws -> PlaybackSnapshot {
     let source = """
     with timeout of 1 second

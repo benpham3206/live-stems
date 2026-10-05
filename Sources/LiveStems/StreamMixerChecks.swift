@@ -156,41 +156,47 @@ enum StreamMixerChecks {
     }
     return ["checked": true, "pass": true, "resting_mix_max_error": errors]
   }
-  // Worker-free proof of the startup ease: playback starts at the live edge, the
-  // render (run at the pipeline's requested rate, as the time-pitch unit would)
-  // never underruns, repeats, or skips, and the delay grows to the steady value.
-  static func ease() throws -> [String: Any] {
-    guard let core = ls_create(44100, 44100) else { throw StemError("Cannot allocate ease check core") }
+  // Worker-free proof that a struggling model cannot make stems flutter. After a
+  // break takeover, every other answer arrives too late. Without the entry gate
+  // stems would drop out and come back several times a second.
+  static func flutter() throws -> [String: Any] {
+    guard let core = ls_create(44100, 44100) else { throw StemError("Cannot allocate flutter check core") }
     defer { ls_destroy(core) }
     let pipeline = StemPipeline(core: core)
     pipeline.start(generation: 1)
-    pipeline.observe(PlaybackSnapshot(trackID: "ease", title: "Ease", duration: 600,
-      position: 0, isPlaying: true), hostTime: stemClock())
-    // Each frame carries its own index: left = index % 1000, right = index / 1000 (scaled).
-    func tick() {
-      let from = pipeline.end
-      pipeline.ingest((0..<441).flatMap { f -> [Float] in
-        let index = from + f
-        return [Float(index % 1000) / 1000, Float(index / 1000) / 1000]
-      }, hostTime: stemClock())
-      pipeline.step()
+    pipeline.holdForBreak()
+    var host = 500.0, playing = true
+    func observe() {
+      _ = pipeline.observe(PlaybackSnapshot(trackID: "f", title: "F", duration: 600, position: host - 500,
+        isPlaying: playing), hostTime: host)
     }
-    // A worker that answers 70 ms after each request, like the real model. With
-    // the delay still small, early answers are partly late: stems must not flicker.
-    var pending = [(due: Int, window: AudioWindow)](), clock = 0
-    var gaps = 0, maxRise: Float = 0, lastWeight: Float = 0, entered = false
-    pipeline.onTrace = { if $0.event == "coverage-gap" { gaps += 1 } }
+    observe()
+    var pending = [(due: Int, window: AudioWindow)](), entries = 0, maxRise: Float = 0, last: Float = 0
     pipeline.onCommit = { _, block in
       for f in 0..<block.count / 11 {
         let w = block[f * 11 + 10]
-        maxRise = max(maxRise, w - lastWeight); lastWeight = w
-        if w >= 0.999 { entered = true }
+        if last < 0.01, w >= 0.01 { entries += 1 }
+        maxRise = max(maxRise, w - last); last = w
       }
     }
-    func work() {
-      clock += 1
-      if let window = pipeline.job() { pending.append((clock + 7, window)) }
-      while let job = pending.first, job.due <= clock {
+    var answers = 0
+    for t in 0..<1700 {  // 12 s of a struggling model, then 5 s of a healthy one
+      host += 0.01
+      if t == 50 { playing = false; observe() }  // a pause: the takeover break
+      if t == 52, !pipeline.outputLive { pipeline.takeOverAtBreak(); ls_enable(core, 1) }
+      if t == 60 { playing = true; observe() }
+      if playing {
+        let from = pipeline.end
+        pipeline.ingest((0..<441).flatMap { f -> [Float] in
+          let v = Float(sin(Double(from + f) * 0.031)) * 0.4
+          return [v, -v]
+        }, hostTime: host)
+      }
+      if let window = pipeline.job() {
+        answers += 1
+        pending.append((t + (t < 1200 && answers % 2 == 0 ? 40 : 7), window))  // every other answer late
+      }
+      while let job = pending.first, job.due <= t {
         pending.removeFirst()
         var out = [Float](repeating: 0, count: job.window.samples.count * 4)
         for f in 0..<job.window.samples.count / 2 {
@@ -198,49 +204,15 @@ enum StreamMixerChecks {
         }
         pipeline.accept(StemWindow(range: job.window.range, samples: out))
       }
+      pipeline.step()
+      _ = StreamE2E.readMix(core, frames: 441)
     }
-    for _ in 0..<30 { tick() }  // 300 ms of capture while Spotify still plays directly
-    let liveEdge = pipeline.end
-    pipeline.beginEase()
-    pipeline.step()
-    ls_enable(core, 1)
-    var rendered = [Int](), owed = 0.0, minRate: Float = 1, maxStep: Float = 0, lastRate = pipeline.easeRate
-    var endedAfter: Double?
-    for t in 0..<4000 {  // 40 s
-      work()
-      tick()
-      minRate = min(minRate, pipeline.easeRate)
-      maxStep = max(maxStep, abs(pipeline.easeRate - lastRate)); lastRate = pipeline.easeRate
-      if endedAfter == nil, !pipeline.easing { endedAfter = Double(t) / 100 }
-      owed += 441 * Double(pipeline.easeRate)
-      let take = Int(owed); owed -= Double(take)
-      let out = StreamE2E.readMix(core, frames: take).samples
-      for f in 0..<take { rendered.append(Int((out[f * 2 + 1] * 1000).rounded()) * 1000 + Int((out[f * 2] * 1000).rounded())) }
-    }
-    let settled = Array(rendered.dropFirst(200))  // the 2.5 ms start envelope scales the first frames
-    let first = settled[0] - 200
-    let replay = liveEdge - first
-    let continuous = zip(settled, settled.dropFirst()).allSatisfy { $1 == $0 + 1 }
-    let finalLatency = pipeline.end - (rendered.last ?? 0)
-    let underruns = ls_underruns(core)
-    guard entered else { throw StemError("Stems never entered during the ease check") }
-    guard gaps == 0 else { throw StemError("Stems flickered: \(gaps) drops back to Original after entering") }
+    guard entries == 1 else { throw StemError("Stems entered \(entries) times; expected once, after the model recovers") }
     guard maxRise <= 1 / Float(pipeline.entryFade) + 1e-6 else {
       throw StemError("Stems entered too fast: weight rose \(maxRise) in one frame")
     }
-    guard replay <= pipeline.easeCushionFrames + 441 else { throw StemError("Ease replayed \(replay) frames at handoff") }
-    guard continuous else { throw StemError("Ease render repeated or skipped a frame") }
-    guard underruns == 0 else { throw StemError("Ease render underran \(underruns) times") }
-    guard let ended = endedAfter, ended < 30 else { throw StemError("Ease did not finish within 30 s") }
-    guard abs(finalLatency - (pipeline.lagFrames + 2205)) <= 882 else {
-      throw StemError("Ease ended at latency \(finalLatency) frames")
-    }
-    guard minRate >= 1 - pipeline.easeMaxSlowdown - 0.0001, maxStep <= 0.0021 else {
-      throw StemError("Ease rate left its bounds: min \(minRate), step \(maxStep)")
-    }
-    return ["checked": true, "pass": true, "handoff_replay_ms": Double(replay) / 44.1, "stem_flicker_gaps": gaps,
-      "ease_seconds": ended, "final_latency_ms": Double(finalLatency) / 44.1,
-      "min_rate": minRate, "max_rate_step": maxStep, "underruns": underruns]
+    return ["checked": true, "pass": true, "stem_entries": entries, "late_results": pipeline.lateResults,
+      "partial_results": pipeline.partialResults, "underruns": ls_underruns(core)]
   }
   // Seeded transition fuzz: skips, seeks, pauses, duplicate notices, model
   // sleep/wake, late results, and the startup ease, in random order. Playback
@@ -266,8 +238,12 @@ enum StreamMixerChecks {
     _ = pipeline.observe(snapshot(), hostTime: host)
     var pending = [(due: Int, window: AudioWindow)]()
     var lastRendered: UInt64 = 0, unexpectedUnderruns = 0, events = [String: Int](), quietUntil = 0
-    var handedOff = false, owed = 0.0, lastUnderruns: UInt64 = 0
-    var handoff: (tick: Int, liveEdge: Int)?  // checked only when Spotify was playing
+    var handedOff = false, lastUnderruns: UInt64 = 0
+    var selfPaused = false, resumeAt: Int?
+    func selfPause() {  // as the session does: pause Spotify to make a takeover break
+      selfPaused = true; playing = false; events["self_pause", default: 0] += 1
+      _ = pipeline.observe(snapshot(), hostTime: host); quietUntil = Int.max
+    }
     var breakEdge: Int?  // a break takeover may replay nothing at all
     let ticks = seconds * 100, tail = 1500
     for t in 0..<(ticks + tail) {
@@ -293,18 +269,18 @@ enum StreamMixerChecks {
         }
         if !handedOff, pipeline.paused || pipeline.breakPending {
           breakEdge = pipeline.end
+          if selfPaused { resumeAt = t + 3 + roll(10); selfPaused = false }
           pipeline.takeOverAtBreak(); pipeline.step(); ls_enable(core, 1); handedOff = true; quietUntil = t + 100
           events["break_takeover", default: 0] += 1
         }
-        if !handedOff, pipeline.end > 2000, roll(400) == 0 {  // stems wanted before any break
-          if playing { handoff = (t, pipeline.end) }
-          pipeline.beginEase(); pipeline.step(); ls_enable(core, 1); handedOff = true; quietUntil = t + 100
-          events["ease", default: 0] += 1
-        }
+        if !handedOff, playing, pipeline.end > 2000, roll(400) == 0 { selfPause() }  // stems wanted early
       } else if !playing {
         playing = true; _ = pipeline.observe(snapshot(), hostTime: host); quietUntil = t + 100
       }
-      if !handedOff, calm { handoff = (t, pipeline.end); pipeline.beginEase(); pipeline.step(); ls_enable(core, 1); handedOff = true; quietUntil = t + 100 }
+      if !handedOff, calm, playing { selfPause() }
+      if let at = resumeAt, t >= at {  // Live Stems presses play again after its own pause
+        resumeAt = nil; playing = true; _ = pipeline.observe(snapshot(), hostTime: host); quietUntil = t + 100
+      }
       if playing {  // capture stalls while Spotify is paused
         position += 0.01
         let from = pipeline.end
@@ -328,22 +304,8 @@ enum StreamMixerChecks {
       }
       pipeline.step()
       if handedOff {
-        owed += 441 * Double(pipeline.easeRate)
-        let take = Int(owed); owed -= Double(take)
-        _ = StreamE2E.readMix(core, frames: take)
+        _ = StreamE2E.readMix(core, frames: 441)
         let rendered = ls_rendered_source_frame(core)
-        if let start = handoff {  // startup: play at once, from the live edge
-          guard rendered != UInt64.max || t - start.tick < 2 else {
-            throw StemError("seed \(seed) t=\(t): no playback 20 ms after the handoff")
-          }
-          if rendered != UInt64.max {
-            let firstFrame = Int(rendered) - Int(441 * pipeline.easeRate)
-            guard start.liveEdge - firstFrame <= pipeline.easeCushionFrames + 441 else {
-              throw StemError("seed \(seed): handoff replayed \(start.liveEdge - firstFrame) frames")
-            }
-            handoff = nil
-          }
-        }
         if let edge = breakEdge, rendered != UInt64.max {
           guard Int(rendered) - 441 >= edge - 64 else {
             throw StemError("seed \(seed): break takeover replayed \(edge - Int(rendered) + 441) frames")
@@ -369,7 +331,6 @@ enum StreamMixerChecks {
     }
     let latency = pipeline.end - Int(lastRendered)
     guard unexpectedUnderruns == 0 else { throw StemError("seed \(seed): \(unexpectedUnderruns) underruns outside transitions") }
-    guard !pipeline.easing else { throw StemError("seed \(seed): ease still running after 15 calm seconds") }
     guard abs(latency - (pipeline.lagFrames + 2205)) <= 2205 else {
       throw StemError("seed \(seed): settled at latency \(latency) frames")
     }
