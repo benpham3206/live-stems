@@ -14,7 +14,7 @@ final class SessionController {
   private var token: UInt64 = 0, job: UInt64 = 0, busy = false, enabled = false,
     outputOn = false, stemsSelected = true, warmupsLeft = 0
   private var awaitingFirstAudio = false, cutHost = 0.0
-  private var stemsWantedAt: Double?  // stems wanted before takeover: waiting for (or making) a break
+  private var takeoverRequestedAt: Double?  // waiting for (or making) a takeover break
   private var controls = StemControls(), began = 0.0, capturePeak: Float = 0,
     lastCaptureEndHost = 0.0
   private var lastDeviceCheck = 0.0, lastDiagnostics = 0.0, lastStatus = ""
@@ -207,20 +207,21 @@ final class SessionController {
     if pipeline.paused { return ls_queued(audio.core) == 0 }
     return spotify == nil && (pipeline.quietFrames >= 11025 || stemClock() - quitStarted > 3)
   }
-  /// The source app plays directly until a break, where the 0.3 s shift is
-  /// silent: a pause, a skip or seek (Spotify notices), or 250 ms of quiet audio
-  /// (any app). Stems wanted before a break: Spotify is paused for a blink;
-  /// other apps get up to 3 s to go quiet, then a dip (a 0.3 s gap that fades
-  /// back in). Never a replay or a speed change.
+  /// A session takes over from the source app as soon as it starts (the app
+  /// starts one at launch), so a later mix change never has to. It uses a
+  /// break where the 0.3 s shift is silent: a pause, a skip or seek (Spotify
+  /// notices), or 250 ms of quiet audio (any app). With none at hand, Spotify is
+  /// paused for a blink; other apps get up to 3 s to go quiet, then a dip (a
+  /// 0.3 s gap that fades back in). Never a replay or a speed change.
   private func takeOverIfReady(_ audio: AudioSession, _ pipeline: StemPipeline) throws {
     let atBreak = pipeline.paused || pipeline.breakPending || pipeline.quietFrames >= 11025
-    if !pipeline.resting, !atBreak, stemsWantedAt == nil {
-      stemsWantedAt = stemClock()
+    if !atBreak, takeoverRequestedAt == nil {
+      takeoverRequestedAt = stemClock()
       spotify?.command("pause")
       trace.record(TraceRecord(event: spotify == nil ? "await-quiet" : "self-pause",
         generation: token, sourceFrame: pipeline.end))
     }
-    let waited = stemsWantedAt.map { stemClock() - $0 > 3 } ?? false
+    let waited = takeoverRequestedAt.map { stemClock() - $0 > 3 } ?? false
     guard atBreak || waited else { return }
     // Mute first: if macOS refuses, nothing has moved yet.
     try audio.setOriginalSuppressed(true)
@@ -228,8 +229,8 @@ final class SessionController {
     pipeline.step()
     // Always undo our own pause, even if its notice never came: the commands
     // run in order on one queue, so Spotify can never be left paused by us.
-    if stemsWantedAt != nil { spotify?.command("play") }
-    stemsWantedAt = nil
+    if takeoverRequestedAt != nil { spotify?.command("play") }
+    takeoverRequestedAt = nil
     audio.setOutputEnabled(true)
     outputOn = true
     trace.record(TraceRecord(event: "handoff", generation: token,

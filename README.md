@@ -162,15 +162,13 @@ Run the same command again to update after `git pull`. The previous version is k
    Spotify, macOS also asks to let it **control Spotify**, which it uses to notice pauses and skips.
 4. Press any **M** or **S**, or move a slider.
 
-Until you change the mix, the app plays straight to your speakers. When you first change it, Live
-Stems takes over the app's sound at a moment where the switch can't be heard:
+When Live Stems opens, it loads the model (about half a second) and then takes over the app's sound,
+so your first mute or solo never has to. It uses a moment where the switch can't be heard if one is
+at hand: a pause, a skip, or a quiet moment within about 3 seconds. Otherwise:
 
-- **at a pause, a skip or a quiet moment** (a gap between songs, a quiet bar), if one comes within
-  about 3 seconds;
-- **Spotify:** otherwise it pauses Spotify for a blink, takes over in that silence and presses play
-  again;
-- **other apps:** otherwise it does a quick dip: the sound stops for about a third of a second and
-  fades back in where it left off.
+- **Spotify:** it pauses Spotify for a blink, takes over in that silence, and presses play again;
+- **other apps:** it does a quick dip: the sound stops for about a third of a second and fades back in
+  where it left off.
 
 Nothing ever repeats or slows down. After that, any change to the mix fades in within about a second,
 and switching headphones or speakers keeps Live Stems running.
