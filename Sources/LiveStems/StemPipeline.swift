@@ -28,12 +28,13 @@ final class StemPipeline {
   private(set) var outputLive = true, breakPending = false
   /// The live session holds output for a break; fixtures keep committing at once.
   func holdForBreak() { outputLive = false; breakPending = false }
-  // Stems enter only after entryStreak results in a row arrive fully on time,
-  // then fade in over entryFade. A coverage gap closes the gate again, so
-  // partly late results (startup, a busy GPU) stay on the stem-free mix
-  // instead of flickering between stems and Original ten times a second.
+  // Stems (re)enter after on-time results, then fade in over entryFade. One
+  // isolated gap, a skip, or a wake needs one on-time result, so a single miss
+  // recovers fast. A second gap within 2 s means the model is struggling: then
+  // entryStreak results in a row are needed, so stems stay on the stem-free mix
+  // instead of flickering against Original ten times a second.
   let entryFade = 8820, entryStreak = 3
-  private var gated = true, entering = false, onTimeStreak = 0
+  private var gated = true, entering = false, onTimeStreak = 0, neededStreak = 1, lastGapFrame = Int.min / 2
   var timings = [Double]()
   private var history = [Float](), ready = [Chunk]()
   private var provisional: Chunk?
@@ -185,7 +186,13 @@ final class StemPipeline {
   }
   /// E2E fixtures that test seams, not entry, start with stems already admitted.
   func e2eOpenStemGate() { gated = false; entering = false; onTimeStreak = entryStreak }
-  private func closeGate() { gated = true; entering = false; onTimeStreak = 0 }
+  private func closeGate() { gated = true; entering = false; onTimeStreak = 0; neededStreak = 1 }
+  private func coverageGap(at frame: Int) {
+    let repeated = frame - lastGapFrame < 88200
+    closeGate()
+    if repeated { neededStreak = entryStreak }
+    lastGapFrame = frame
+  }
   private func resetContext(at frame: Int, flush: Bool, host: Double = stemClock(), scan: Bool = false) {
     closeGate()
     version += 1; contextStart = frame; scheduledEnd = frame
@@ -292,7 +299,7 @@ final class StemPipeline {
     acceptedResults += 1
     if coreLo == job.core.lowerBound {
       onTimeStreak += 1
-      if gated, onTimeStreak >= entryStreak { gated = false; entering = true }
+      if gated, onTimeStreak >= neededStreak { gated = false; entering = true }
     }
     onTrace?(TraceRecord(event: "accepted-result", generation: generation,
       sourceFrame: coreLo, sourceEnd: job.core.upperBound,
@@ -332,7 +339,7 @@ final class StemPipeline {
         for channel in 0..<8 { samples[out + channel] = tail.samples[offset + channel] }
         usedProvisional = true
       } else {
-        if weight > 0 { closeGate() }
+        if weight > 0 { coverageGap(at: frame) }
         weight = 0
         usedProvisional = false
       }

@@ -75,12 +75,21 @@ If stems are wanted before any break, the session makes one: it sends Spotify
 A change of default output moves the AVAudioEngine output to the new device.
 Capture, the queue, and the delay stay, so no second takeover happens.
 
-Stems enter only after three results in a row arrive fully on time, then fade
-in over 200 ms. A coverage gap closes that gate again and fades stems out while
-stem data remains. Without it, partly late results made stems flicker against
-Original about ten times a second. The `flutter` stage checks this with a
-simulated worker whose every other answer is late (with the gate removed, stems
-enter 22 times in 12 s; with it, once, after the worker recovers). Within
+Stems (re)enter after on-time results, then fade in over 200 ms. One isolated
+coverage gap, a skip, or a wake needs one on-time result, so a single miss
+recovers within the stream stage's 500 ms. A second gap within 2 s needs three
+results in a row; a partly late result resets that count. Without the gate,
+partly late results made stems flicker against Original about ten times a
+second. The `flutter` stage uses a worker whose every third answer is 300 ms
+late: without escalation the stem weight turns down 20 times in 12 s, with it
+twice, and stems return once the worker is healthy.
+
+Spotify state reads are stamped at the middle of the AppleScript call, when
+Spotify sampled the position. Stamping at publish time made slow reads (worse
+while a pause or play command shares the reader queue) look like seeks, which
+flushed playback. The skip-state stage checks the stamp with a 0.6 s read.
+
+Within
 captured playback, Original and stems use the same source frames.
 
 Capture history is bounded to three seconds and compacts to two seconds. Ready

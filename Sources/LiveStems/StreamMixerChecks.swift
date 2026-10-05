@@ -71,6 +71,10 @@ enum StreamMixerChecks {
     // The held window arrives partly late: its suffix must commit without any
     // full-Original frame, and the hold must be logged, not hidden.
     guard let second = pipeline.job() else { throw StemError("Provisional check built no held window") }
+    // The hold above ran past the tail, a real gap, which closes the entry gate
+    // (see the flutter stage). This part checks only that a partly late result
+    // commits its uncommitted suffix, so it starts with stems admitted again.
+    pipeline.e2eOpenStemGate()
     let heldAt = pipeline.outputPosition
     pipeline.accept(stems(for: second))
     guard pipeline.partialResults == 1, pipeline.discarded == 0,
@@ -157,8 +161,8 @@ enum StreamMixerChecks {
     return ["checked": true, "pass": true, "resting_mix_max_error": errors]
   }
   // Worker-free proof that a struggling model cannot make stems flutter. After a
-  // break takeover, every other answer arrives too late. Without the entry gate
-  // stems would drop out and come back several times a second.
+  // break takeover, every third answer arrives 300 ms late. Without the escalating
+  // entry gate stems would drop out and come back about twice a second.
   static func flutter() throws -> [String: Any] {
     guard let core = ls_create(44100, 44100) else { throw StemError("Cannot allocate flutter check core") }
     defer { ls_destroy(core) }
@@ -172,10 +176,14 @@ enum StreamMixerChecks {
     }
     observe()
     var pending = [(due: Int, window: AudioWindow)](), entries = 0, maxRise: Float = 0, last: Float = 0
+    var struggleEntries = 0, turns = 0, struggleTurns = 0, peak: Float = 0, rising = false
     pipeline.onCommit = { _, block in
       for f in 0..<block.count / 11 {
         let w = block[f * 11 + 10]
         if last < 0.01, w >= 0.01 { entries += 1 }
+        // A turn is a rise of 0.05 or more followed by a fall of 0.05 or more.
+        if rising { if w > peak { peak = w } else if peak - w >= 0.05 { turns += 1; rising = false; peak = w } }
+        else { if w < peak { peak = w } else if w - peak >= 0.05 { rising = true; peak = w } }
         maxRise = max(maxRise, w - last); last = w
       }
     }
@@ -194,7 +202,7 @@ enum StreamMixerChecks {
       }
       if let window = pipeline.job() {
         answers += 1
-        pending.append((t + (t < 1200 && answers % 2 == 0 ? 40 : 7), window))  // every other answer late
+        pending.append((t + (t < 1200 && answers % 3 == 0 ? 30 : 7), window))  // every third answer late
       }
       while let job = pending.first, job.due <= t {
         pending.removeFirst()
@@ -206,12 +214,18 @@ enum StreamMixerChecks {
       }
       pipeline.step()
       _ = StreamE2E.readMix(core, frames: 441)
+      if t == 1199 { struggleEntries = entries; struggleTurns = turns }
     }
-    guard entries == 1 else { throw StemError("Stems entered \(entries) times; expected once, after the model recovers") }
+    // First entry, then at most one fast recovery from an isolated miss; the
+    // repeated gaps escalate the gate and stems stay out until the model is healthy.
+    guard struggleTurns <= 2 else {
+      throw StemError("Stems fluttered: weight turned down \(struggleTurns) times in 12 s")
+    }
+    guard last >= 0.999 else { throw StemError("Stems did not come back after the model recovered") }
     guard maxRise <= 1 / Float(pipeline.entryFade) + 1e-6 else {
       throw StemError("Stems entered too fast: weight rose \(maxRise) in one frame")
     }
-    return ["checked": true, "pass": true, "stem_entries": entries, "late_results": pipeline.lateResults,
+    return ["checked": true, "pass": true, "stem_entries": entries, "struggle_entries": struggleEntries, "struggle_turns": struggleTurns, "late_results": pipeline.lateResults,
       "partial_results": pipeline.partialResults, "underruns": ls_underruns(core)]
   }
   // Seeded transition fuzz: skips, seeks, pauses, duplicate notices, model

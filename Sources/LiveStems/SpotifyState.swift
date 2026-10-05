@@ -107,19 +107,23 @@ final class SpotifyState {
     let reader = self.reader
     readerQueue.async { [weak self] in
       let result: Result<PlaybackSnapshot, Error>
+      // Spotify samples the position during the Apple Event, not when the reply
+      // is published. A slow read stamped at publish time looks like a seek.
+      let began = stemClock()
       do {
         result = .success(try reader())
       } catch {
         result = .failure(error)
       }
+      let sampled = (began + stemClock()) / 2
       self?.stateQueue.async { [weak self] in
-        self?.finishRead(result, readID: readID, lifecycle: lifecycle, noticeVersion: noticeVersion)
+        self?.finishRead(result, sampled: sampled, readID: readID, lifecycle: lifecycle, noticeVersion: noticeVersion)
       }
     }
   }
 
   private func finishRead(
-    _ result: Result<PlaybackSnapshot, Error>, readID: UInt64,
+    _ result: Result<PlaybackSnapshot, Error>, sampled: Double, readID: UInt64,
     lifecycle: UInt64, noticeVersion: UInt64
   ) {
     dispatchPrecondition(condition: .onQueue(stateQueue))
@@ -130,7 +134,7 @@ final class SpotifyState {
     case .success(let snapshot):
       latestSnapshot = snapshot
       lastUnavailable = ""
-      onSnapshot?(snapshot, stemClock())
+      onSnapshot?(snapshot, sampled)
     case .failure(let error):
       let message = error.localizedDescription
       guard message != lastUnavailable else { return }

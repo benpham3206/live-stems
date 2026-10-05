@@ -119,8 +119,9 @@ enum SpotifyStateE2E {
       let skip = try delayedSkipAndNotices()
       let staleFailureCheck = try staleFailure()
       let lifecycle = try stopAndRestart()
+      let stamp = try slowReadStamp()
       report["status"] = "pass"
-      report["checks"] = [skip, staleFailureCheck, lifecycle]
+      report["checks"] = [skip, staleFailureCheck, lifecycle, stamp]
       let skipElapsed = skip["elapsed_seconds"] as? Double ?? 0
       let failureElapsed = staleFailureCheck["elapsed_seconds"] as? Double ?? 0
       let lifecycleElapsed = lifecycle["elapsed_seconds"] as? Double ?? 0
@@ -132,6 +133,27 @@ enum SpotifyStateE2E {
       try? write(report, to: out)
       throw error
     }
+  }
+
+  /// A slow read carries the time Spotify sampled the position (mid-read), not
+  /// the publish time. Stamping at publish made slow reads look like seeks.
+  private static func slowReadStamp() throws -> [String: Any] {
+    let readTime = 0.6
+    let state = SpotifyState(reader: {
+      Thread.sleep(forTimeInterval: readTime)
+      return PlaybackSnapshot(trackID: "stamp", title: "S", duration: 200, position: 10, isPlaying: true)
+    })
+    let got = DispatchSemaphore(value: 0)
+    var stamped = 0.0, published = 0.0
+    let began = stemClock()
+    state.start(onSnapshot: { _, host in
+      if stamped == 0 { stamped = host; published = stemClock(); got.signal() }
+    }, onUnavailable: { _ in })
+    defer { state.stop() }
+    try require(got.wait(timeout: .now() + 3) == .success, "Slow reader never published")
+    let offset = stamped - began
+    try require(abs(offset - readTime / 2) < 0.15, "Slow read stamped at \(offset) s, expected about \(readTime / 2) s")
+    return ["name": "slow_read_stamp", "stamp_offset_seconds": offset, "publish_offset_seconds": published - began]
   }
 
   private static func delayedSkipAndNotices() throws -> [String: Any] {

@@ -60,7 +60,7 @@ enum ReturnE2E {
         resumed.playedFrames > continued.playedFrames,
         resumed.captureFrames > continued.captureFrames,
         resumed.hardCuts == initial.hardCuts else {
-        throw StemError("Rapid Return/restart changed the session or source clock")
+        throw StemError("Rapid Return/restart changed the session or source clock: generation \(initial.sessionGeneration)->\(resumed.sessionGeneration) played \(continued.playedFrames)->\(resumed.playedFrames) capture \(continued.captureFrames)->\(resumed.captureFrames) cuts \(initial.hardCuts)->\(resumed.hardCuts)")
       }
       session.shutdownSync(); stopped = true
       var samples = [TraceRecord]()
