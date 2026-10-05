@@ -238,7 +238,7 @@ enum StreamMixerChecks {
       throw StemError("Stems fluttered: weight turned down \(struggleTurns) times in 12 s")
     }
     guard last >= 0.999 else { throw StemError("Stems did not come back after the model recovered") }
-    guard maxRise <= 1 / Float(pipeline.entryFade) + 1e-6 else {
+    guard maxRise <= 1 / Float(pipeline.gate.fade) + 1e-6 else {
       throw StemError("Stems entered too fast: weight rose \(maxRise) in one frame")
     }
     return ["checked": true, "pass": true, "stem_entries": entries, "struggle_entries": struggleEntries, "struggle_turns": struggleTurns, "late_results": pipeline.lateResults,

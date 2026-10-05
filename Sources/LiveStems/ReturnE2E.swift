@@ -50,11 +50,11 @@ enum ReturnE2E {
       }
       // Exercise cancellation while the first replacement warms. Keep capture
       // running throughout; the second replacement must own completion.
-      session.toggleMix()
+      session.restoreStems()
       RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
       session.useDirectPlayback()
       RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
-      session.toggleMix()
+      session.restoreStems()
       let resumed = try wait(35) {
         $0.active && $0.stemsSelected && $0.workerPID > 0 && $0.workerPID != initial.workerPID
           && $0.acceptedResults >= continued.acceptedResults + 10 && $0.blendWeight > 0.9
