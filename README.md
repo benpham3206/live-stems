@@ -92,8 +92,7 @@ Run the same command again to update after `git pull`. The previous version is k
 3. Click **Stems** in the menu bar to show the panel, then press any **M** or **S**, or move a slider.
 
 Live Stems takes over from Spotify at the next pause, skip, or seek, so you never hear the switch.
-The status line says *Spotify direct · ready at the next pause, skip, or seek* until then. After
-that, any change to the mix fades in within about a second.
+After that, any change to the mix fades in within about a second.
 
 If you change the mix before any break, Live Stems makes one: it pauses Spotify for a blink, takes
 over in that silence, and presses play again. The song never slows down or repeats. Switching

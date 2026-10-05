@@ -279,7 +279,6 @@ final class SessionController {
     }
   }
   private func mixStatus(_ pipeline: StemPipeline) -> String {
-    if !outputOn { return "Spotify direct · ready at the next pause, skip, or seek" }
     if pipeline.paused { return pipeline.statusText }
     if !stemsSelected { return "Original mix · model asleep" }
     if pipeline.resting {
