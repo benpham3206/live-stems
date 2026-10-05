@@ -27,6 +27,27 @@ struct PlaybackSnapshot {
   var position: Double
   var isPlaying: Bool
 }
+/// The app whose audio Live Stems separates. Spotify gets extra transport
+/// support (exact pause/skip notices, a self-pause); any app works through audio.
+struct AudioSource: Equatable {
+  var bundleID: String
+  var name: String
+  static let spotify = AudioSource(bundleID: "com.spotify.client", name: "Spotify")
+  var isSpotify: Bool { bundleID == Self.spotify.bundleID }
+  /// The chosen source, kept across launches.
+  static var saved: AudioSource {
+    get {
+      let defaults = UserDefaults.standard
+      guard let id = defaults.string(forKey: "sourceBundleID"), let name = defaults.string(forKey: "sourceName")
+      else { return .spotify }
+      return AudioSource(bundleID: id, name: name)
+    }
+    set {
+      UserDefaults.standard.set(newValue.bundleID, forKey: "sourceBundleID")
+      UserDefaults.standard.set(newValue.name, forKey: "sourceName")
+    }
+  }
+}
 struct StemControls {
   var gains: [Float] = [1, 1, 1, 1]
   var mute: UInt32 = 0

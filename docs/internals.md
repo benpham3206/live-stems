@@ -59,14 +59,26 @@ A small Original relay keeps the playback clock until Spotify pauses. It then
 drains the queued tail and exits. Open the app again to restore its controls
 and cancel the pending exit. The relay does not run the model.
 
-The app arms at launch: capture and the worker start, Spotify stays direct, and
+The source is any open app, picked in the panel (saved across launches). The
+tap takes the app's bundle ID, its helpers (bundle IDs with the app's ID as a
+case-insensitive prefix, e.g. com.google.Chrome.helper), and for Safari the
+shared com.apple.WebKit.GPU process. Spotify alone adds transport notices,
+Apple Events reads, and the self-pause; other apps work from audio alone.
+
+The app arms at launch: capture and the worker start, the source stays direct, and
 the pipeline commits nothing (holdForBreak), so waiting cannot fill the queue.
 It takes over at the next natural break: while Spotify is paused (silent), or at
 a track change or seek notice. Takeover discards everything already heard, so
 playback resumes from that point after the steady lag and nothing repeats; the
 shift lands on silence or a fresh start. Quit before takeover ends at once.
 
-If stems are wanted before any break, the session makes one: it sends Spotify
+For every source, 250 ms of quiet capture (below about -48 dBFS) is also a
+break. For apps other than Spotify, if no break comes within 3 s of stems being
+wanted, the session takes over anyway: a dip, a 0.3 s gap whose first 50 ms
+after the gap fade in. Quit hands back at a Spotify pause, or for other apps at
+a quiet moment, at most 3 s later.
+
+If stems are wanted before any break and the source is Spotify, the session makes one: it sends Spotify
 "pause" over Apple Events, takes over when the paused state arrives, and sends
 "play" (always, even if the pause notice never came, so Spotify is never left
 paused). If no pause arrives within 2 s it takes over anyway, which leaves a

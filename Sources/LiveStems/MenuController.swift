@@ -1,18 +1,19 @@
 import AppKit
 import OSLog
 
-final class MenuController: NSObject, NSWindowDelegate {
+final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate {
   private var item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let session = SessionController()
   private var relaying = false
   private let activatesOnStatusClick: Bool
   private let terminate: () -> Void
   private let window = NSWindow(
-    contentRect: NSRect(x: 0, y: 0, width: 330, height: 426),
+    contentRect: NSRect(x: 0, y: 0, width: 330, height: 456),
     styleMask: [.titled, .closable], backing: .buffered,
     defer: false)
   private let windowLog = Logger(subsystem: "com.benpham.livestems", category: "Windowing")
-  private let statusLabel = NSTextField(labelWithString: "Live Spotify · original"),
+  private let sourcePicker = NSPopUpButton(frame: .zero, pullsDown: false)
+  private let statusLabel = NSTextField(labelWithString: ""),
     outputLabel = NSTextField(labelWithString: ""),
     startButton = NSButton(title: "Reset", target: nil, action: nil)
   private var active = false, panelRequested = true, controls = StemControls()
@@ -43,13 +44,22 @@ final class MenuController: NSObject, NSWindowDelegate {
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     window.delegate = self
     window.level = .floating
-    let content = NSView(frame: NSRect(x: 0, y: 0, width: 330, height: 426))
+    let content = NSView(frame: NSRect(x: 0, y: 0, width: 330, height: 456))
     window.contentView = content
-    statusLabel.frame = NSRect(x: 16, y: 393, width: 298, height: 20)
+    statusLabel.frame = NSRect(x: 16, y: 423, width: 298, height: 20)
     content.addSubview(statusLabel)
-    outputLabel.frame = NSRect(x: 16, y: 371, width: 298, height: 18)
+    outputLabel.frame = NSRect(x: 16, y: 401, width: 298, height: 18)
     outputLabel.font = .systemFont(ofSize: 11)
     content.addSubview(outputLabel)
+    // Any open app can be the source; the list refreshes each time it opens.
+    sourcePicker.frame = NSRect(x: 12, y: 367, width: 306, height: 26)
+    sourcePicker.menu?.delegate = self
+    sourcePicker.target = self
+    sourcePicker.action = #selector(pickSource)
+    sourcePicker.setAccessibilityLabel("Audio source")
+    content.addSubview(sourcePicker)
+    statusLabel.stringValue = "\(session.source.name) · direct"
+    fillSources()
     startButton.frame = NSRect(x: 12, y: 333, width: 306, height: 30)
     startButton.target = self
     startButton.action = #selector(resetButton)
@@ -182,6 +192,34 @@ final class MenuController: NSObject, NSWindowDelegate {
     windowLog.info(
       "Windowing close event=windowWillClose visible=\(self.window.isVisible, privacy: .public) appActive=\(NSApp.isActive, privacy: .public)"
     )
+  }
+  func menuNeedsUpdate(_ menu: NSMenu) { fillSources() }
+  /// Open regular apps (not Live Stems), plus the saved source if it is closed.
+  private func fillSources() {
+    let current = session.source
+    var apps = NSWorkspace.shared.runningApplications
+      .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+      .compactMap { app -> (AudioSource, NSImage?)? in
+        guard let id = app.bundleIdentifier, let name = app.localizedName else { return nil }
+        return (AudioSource(bundleID: id, name: name), app.icon)
+      }
+      .sorted { $0.0.name.localizedCaseInsensitiveCompare($1.0.name) == .orderedAscending }
+    if !apps.contains(where: { $0.0 == current }) { apps.insert((current, nil), at: 0) }
+    sourcePicker.removeAllItems()
+    for (source, icon) in apps {
+      sourcePicker.addItem(withTitle: source.name)
+      let item = sourcePicker.lastItem!
+      item.representedObject = source.bundleID
+      icon?.size = NSSize(width: 16, height: 16)
+      item.image = icon
+      if source == current { sourcePicker.select(item) }
+    }
+  }
+  @objc private func pickSource() {
+    guard let item = sourcePicker.selectedItem, let id = item.representedObject as? String else { return }
+    let source = AudioSource(bundleID: id, name: item.title)
+    AudioSource.saved = source
+    session.setSource(source)
   }
   /// Neutral controls and a live stem splitter again, whatever state it was in.
   @objc private func resetButton() {

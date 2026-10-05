@@ -39,20 +39,20 @@ final class AudioSession {
   private var captureBoundary = 0.0
   private(set) var lastDrainEndHostSeconds = 0.0
   private(set) var outputBufferFrames: UInt32 = 0
-  init() throws {
+  init(source: AudioSource = .spotify) throws {
     do {
       guard outputID != 0 else { throw StemError("No output device") }
-      description.name = "Live Stems Spotify"
+      description.name = "Live Stems \(source.name)"
       description.uuid = UUID()
       description.isPrivate = true
       description.isMixdown = true
       description.isMono = false
       description.isExclusive = false
-      description.bundleIDs = ["com.spotify.client"]
+      description.bundleIDs = Self.tapBundleIDs(for: source.bundleID)
       description.isProcessRestoreEnabled = true
       description.muteBehavior = .unmuted
       try audioCheck(
-        AudioHardwareCreateProcessTap(description, &tapID), "Cannot create Spotify tap")
+        AudioHardwareCreateProcessTap(description, &tapID), "Cannot capture \(source.name)")
       var a = audioAddress(kAudioTapPropertyFormat)
       var format = AudioStreamBasicDescription()
       var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
@@ -97,6 +97,30 @@ final class AudioSession {
       throw error
     }
   }
+  /// Many apps play audio from helper processes: browsers (com.google.Chrome.helper,
+  /// company.thebrowser.browser.helper) and Safari, whose audio comes from the
+  /// shared WebKit GPU process. Tap the app, its helpers, and Safari's WebKit.
+  static func tapBundleIDs(for bundleID: String) -> [String] {
+    var ids = [bundleID, bundleID + ".helper"]
+    if bundleID == "com.apple.Safari" { ids.append("com.apple.WebKit.GPU") }
+    var address = audioAddress(kAudioHardwarePropertyProcessObjectList)
+    var size: UInt32 = 0
+    AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size)
+    var processes = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &processes)
+    let prefix = bundleID.lowercased() + "."
+    for process in processes {
+      var name = audioAddress(kAudioProcessPropertyBundleID)
+      var value: CFString = "" as CFString
+      var length = UInt32(MemoryLayout<CFString>.size)
+      guard withUnsafeMutablePointer(to: &value, {
+        AudioObjectGetPropertyData(process, &name, 0, nil, &length, $0)
+      }) == noErr else { continue }
+      let id = value as String
+      if id.lowercased().hasPrefix(prefix), !ids.contains(id) { ids.append(id) }
+    }
+    return ids
+  }
   // Audio already handed to the device survives a flush. A small
   // per-process IO buffer bounds that old-audio leak after a skip.
   private func setSmallOutputBuffer() {
@@ -123,7 +147,7 @@ final class AudioSession {
       try engine.start()
       try audioCheck(
         AudioDeviceStart(aggregate, ioProc),
-        "Cannot start Spotify capture")
+        "Cannot start audio capture")
       started = true
     } catch {
       stop()
@@ -138,7 +162,7 @@ final class AudioSession {
       try audioCheck(
         AudioObjectSetPropertyData(
           tapID, &a, 0, nil, UInt32(MemoryLayout<CATapDescription>.size), $0),
-        "Cannot switch Spotify playback")
+        "Cannot switch the source app's playback")
     }
   }
   func setOutputEnabled(_ value: Bool) {
