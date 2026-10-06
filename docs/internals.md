@@ -120,6 +120,9 @@ sample clock remains the authority for audio alignment.
 
 ## Verification
 
+Run every command in this section from the workspace root (`~/LiveStems`, see README step 1).
+`script/verify.sh` runs the build and the checks that need no GPU, signing or audio permission.
+
 Live timing logs are local under `~/Library/Application Support/Live Stems/`.
 `live-trace.jsonl` records mix changes, source frames, job windows and durations,
 coverage gaps, queue depth, and thermal state. Late and partly late results,
@@ -167,10 +170,13 @@ startup and source changes settle. The configured buffer alone cannot prove
 observed latency. Each sample also records whole-GPU utilization from IOKit. The report gives mean
 and maximum GPU and CPU load. GPU load is not per process. Samples are 5 s apart,
 so they do not show peak load. A passing fixture is not proof
-of live capture or human sound quality. Current results and limitations are in
-`outputs/live-stems-state.md`.
+of live capture or human sound quality.
 
-The native `skip`, `skip-state`, `trace`, `startup`, `menu`, and `rest` stages run
+The `worker`, `stream` and `recovery` stages need a private audio fixture that is not in this
+repository: `work/dreamflasher-original.wav` and its manifest `outputs/four-stem-preflight.json`.
+
+The native stages are compiled into the app because macOS grants audio capture to the signed
+app bundle, so the live stages must run as that app. The `skip`, `skip-state`, `trace`, `startup`, `menu`, and `rest` stages run
 through the release binary with `--e2e <stage> --output <directory>`. The `return` stage
 uses the signed app, live Spotify capture, and the real worker. Close the normal
 app and leave Spotify playing before that stage. It checks Return, cancellation
@@ -197,16 +203,16 @@ Run from a shell, macOS can refuse to mute Spotify's tap ('!hog',
 560492391), and the session stops at the handoff. Quit the normal app first.
 
 ```sh
-open -W -g "/Applications/Live Stems.app" --args --e2e quit --output "$PWD/outputs/live-stems-acceptance/pr2-live/quit"
-open -W -g "/Applications/Live Stems.app" --args --e2e return --output "$PWD/outputs/live-stems-acceptance/pr2-live/return"
+open -W -g "/Applications/Live Stems.app" --args --e2e quit --output "$PWD/outputs/live-stems-acceptance/quit"
+open -W -g "/Applications/Live Stems.app" --args --e2e return --output "$PWD/outputs/live-stems-acceptance/return"
 ```
 
 The GPU-free stages run from a shell:
 
 ```sh
 "/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e transitions --output outputs/live-stems-acceptance/transitions
-"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e quit-race --output outputs/live-stems-acceptance/transitions-2/repeat-race
-"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e capture-cut --output outputs/live-stems-acceptance/transitions-2/repeat-cut
+"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e quit-race --output outputs/live-stems-acceptance/quit-race
+"/Applications/Live Stems.app/Contents/MacOS/LiveStems" --e2e capture-cut --output outputs/live-stems-acceptance/capture-cut
 ```
 
 The earlier cache and no-rewind reports describe previous builds. They are not
