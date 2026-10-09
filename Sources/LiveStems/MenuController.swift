@@ -1,13 +1,19 @@
 import AppKit
 import OSLog
 
-/// The panel closes on Cmd+W like any window. The app has no menu bar to
-/// carry that shortcut, so the window handles it itself.
+/// The app has no menu bar to carry Cmd+W (close) and Cmd+Q (quit), so the
+/// panel handles them itself.
 final class PanelWindow: NSWindow {
+  var quit: () -> Void = {}
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
-    guard event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-      event.charactersIgnoringModifiers == "w" else { return super.performKeyEquivalent(with: event) }
-    performClose(nil)
+    guard event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {
+      return super.performKeyEquivalent(with: event)
+    }
+    switch event.charactersIgnoringModifiers {
+    case "w": performClose(nil)
+    case "q": quit()
+    default: return super.performKeyEquivalent(with: event)
+    }
     return true
   }
 }
@@ -43,6 +49,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate {
     window.isReleasedWhenClosed = false
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     window.delegate = self
+    window.quit = { [weak self] in self?.quitApp() }
     window.level = .floating
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden

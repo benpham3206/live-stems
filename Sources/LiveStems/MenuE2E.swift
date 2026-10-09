@@ -207,6 +207,16 @@ enum MenuE2E {
     try require(app.isActive == launchActive, "Relay E2E stole app focus")
     checks.append(["name": "quit_and_reopen", "inactive_completion_count": quitCompletions,
       "readiness_stays_hidden": true, "reopen_visible": window.isVisible])
+    let cmdQ = NSEvent.keyEvent(
+      with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: window.windowNumber,
+      context: nil, characters: "q", charactersIgnoringModifiers: "q", isARepeat: false, keyCode: 12)!
+    try require(window.performKeyEquivalent(with: cmdQ), "Cmd+Q was not handled by the panel")
+    pump()
+    try require(!window.isVisible, "Cmd+Q kept controls visible")
+    try require(quitCompletions == 2, "Cmd+Q did not quit exactly once, like the Quit button")
+    controller.reopen()
+    pump()
+    checks.append(["name": "cmd_q_quits", "completion_count": quitCompletions])
     return checks
   }
   static func snapshot(_ out: URL) throws {
