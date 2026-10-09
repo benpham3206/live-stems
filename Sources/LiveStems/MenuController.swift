@@ -28,6 +28,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private(set) var canTerminate = false
   private let activatesOnStatusClick: Bool
   private let terminate: () -> Void
+  private let setPolicy: (NSApplication.ActivationPolicy) -> Void
   private let window = PanelWindow(
     contentRect: NSRect(origin: .zero, size: ControlsPanel.size),
     styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered,
@@ -43,7 +44,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private let startOverride: (() -> Void)?
   /// `start` replaces the session start; the menu E2E counts starts without capturing audio.
   init(activateOnStatusClick: Bool, terminate: @escaping () -> Void = { NSApp.terminate(nil) },
-    start: (() -> Void)? = nil) {
+    start: (() -> Void)? = nil,
+    setPolicy: @escaping (NSApplication.ActivationPolicy) -> Void = { NSApp.setActivationPolicy($0) }) {
+    self.setPolicy = setPolicy
     self.activatesOnStatusClick = activateOnStatusClick
     self.terminate = terminate
     self.startOverride = start
@@ -246,7 +249,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private func applyControls() {
     panel.muteAllButton.state = controls.mute == 0b1111 ? .on : .off
     panel.clearSoloButton.state = controls.solo != 0 ? .on : .off
-    for (strip, gain) in zip(panel.strips, controls.effectiveGains) { strip.waveform.dimmed = gain == 0 }
+    for (index, (strip, gain)) in zip(panel.strips, controls.effectiveGains).enumerated() {
+      strip.show(silent: gain == 0, soloed: controls.solo & (1 << UInt32(index)) != 0)
+    }
     session.setControls(controls)
     // No enable step: the first mix that needs stems starts Live Stems.
     if !active, Set(controls.effectiveGains).count > 1 { (startOverride ?? session.start)() }
@@ -273,8 +278,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   /// Applies the saved choice. E2E controllers skip the policy so tests never change the app.
   func applyVisibility() {
     item.isVisible = Visibility.menuBar
+    setPolicy(Visibility.dock ? .regular : .accessory)
     guard activatesOnStatusClick else { return }
-    NSApp.setActivationPolicy(Visibility.dock ? .regular : .accessory)
     NSApp.mainMenu = appMenu()
   }
   /// Menu for the status item and the Dock icon.
@@ -327,6 +332,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     panelRequested = false
     window.orderOut(nil)
     NSStatusBar.system.removeStatusItem(item)
+    // The relay can wait for the next pause while music plays; the app must look gone meanwhile.
+    setPolicy(.accessory)
     resetControls()  // a reopen starts from Original with the model asleep
     session.quit { [weak self] in
       self?.canTerminate = true
@@ -341,6 +348,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       canTerminate = false
       item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
       configureStatusItem()
+      applyVisibility()
       session.cancelQuit()
     }
     showPanel()
