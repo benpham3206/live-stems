@@ -319,6 +319,11 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     }
     showPanel()
   }
+  /// Cmd+Tab only activates the app; a closed panel must come back with it.
+  func appActivated() {
+    guard !relaying else { return }
+    if window.isVisible { window.makeKeyAndOrderFront(nil) } else { showPanel() }
+  }
   func enable() { session.start() }
   func shutdown() { session.shutdownSync() }
 }

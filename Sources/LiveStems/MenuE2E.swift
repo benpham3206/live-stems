@@ -229,6 +229,14 @@ enum MenuE2E {
     pump()
     try require(window.isVisible, "Reopen after terminate did not restore controls")
     checks.append(["name": "terminate_uses_quit_path"])
+    // Cmd+Tab back to the app after closing the panel: activation alone must bring it back.
+    window.performClose(nil)
+    pump()
+    try require(!window.isVisible, "Close did not hide the panel")
+    controller.appActivated()
+    pump()
+    try require(window.isVisible, "Activating the app did not bring the closed panel back")
+    checks.append(["name": "activation_shows_panel"])
     // Dock and menu bar toggles: at least one must stay on.
     Visibility.reset()
     defer { Visibility.reset() }
