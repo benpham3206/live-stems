@@ -30,13 +30,17 @@ Resting stops GPU jobs but keeps the worker loaded. A control change wakes it,
 and stems fade in from the last captured second. Resting frames are not counted
 as steady stem frames. Reset returns all controls to neutral, selects stems, and starts a worker if none runs. Reopening
 the app during a Quit relay does the same.
-Pause drains the short buffered tail, then stops. Resume keeps the source
-sequence and prepares new model context. A manual skip discards the old queue,
-the last rendered sample, unread capture, and converter carry. Notifications
+Pause and a manual skip fade out at the notice with Spotify's own curve,
+measured by the `skip-probe` stage: gain (1 - t/T)^4, T = 280 ms for a pause
+and 100 ms for next, previous, or a seek. The fade plays the delay's worth of
+captured audio, so it starts at the notice, not a delay later. Resume keeps the
+source sequence and prepares new model context; Spotify's own fade-in is in
+the capture. A manual skip then discards the rest of the old queue, unread
+capture, and converter carry. Notifications
 publish without waiting for the blocking metadata reader. Stale reads cannot
 restore a track after a skip. A cut inside one second of the last cut that
-names either side of it is the same transition, not a new skip. The render
-fades the last sample over 2 ms at a flush instead of cutting hard. The
+names either side of it is the same transition, not a new skip. Other flushes
+fade the last rendered sample over 2 ms instead of cutting hard. The
 notice precedes the acoustic change by about 50 ms and a silence gap follows
 the old-track tail, so the first gap start becomes the new model boundary
 without delaying playback. The post-skip rebuild rehearses the latest second

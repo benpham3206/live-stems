@@ -136,7 +136,13 @@ final class SessionController {
     do {
       if stemClock() - lastDeviceCheck > 0.5 {
         lastDeviceCheck = stemClock()
-        if defaultOutput() != audio.outputID {
+        if quitCompletion == nil, audio.captureRateChanged {
+          // Rebuild capture at the new rate, as a source change does; the app plays direct meanwhile.
+          end("Sample rate changed · restarting")
+          queue.async { self.start() }
+          return
+        }
+        if defaultOutput() != audio.outputID || audio.outputStopped {
           // Follow headphones or speakers; capture and the delay stay, so no new takeover.
           try audio.followOutput()
           trace.record(TraceRecord(event: "output-change", generation: token,

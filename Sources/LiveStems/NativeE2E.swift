@@ -148,12 +148,16 @@ enum NativeE2E {
       try MenuE2E.spam(out)
     case "snapshot":
       try MenuE2E.snapshot(out)
+    case "fader-redraw":
+      try FaderRedrawE2E.run()
     case "transitions":
       var runs = [[String: Any]]()
       for seed in UInt64(1)...25 { runs.append(try StreamMixerChecks.transitions(seed: seed)) }
       try JSONSerialization.data(withJSONObject: runs, options: [.prettyPrinted, .sortedKeys])
         .write(to: out.appendingPathComponent("transitions.json"))
       print("PASS transitions · 25 seeds × 75 s of random skips, seeks, pauses, sleeps, late results")
+    case "fades":
+      print("PASS fades · \(try StreamMixerChecks.fades())")
     case "flutter":
       let report = try StreamMixerChecks.flutter()
       try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])

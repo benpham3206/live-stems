@@ -176,6 +176,16 @@ enum MenuE2E {
       "visible_after_reopen": window.isVisible,
       "status_click_activation": "disabled_for_native_e2e",
     ])
+    let cmdW = NSEvent.keyEvent(
+      with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: window.windowNumber,
+      context: nil, characters: "w", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 13)!
+    try require(window.performKeyEquivalent(with: cmdW), "Cmd+W was not handled by the panel")
+    pump()
+    try require(!window.isVisible, "Cmd+W did not close the controls window")
+    status.performClick(nil)
+    pump()
+    try require(window.isVisible, "Status-item reopen after Cmd+W did not show controls")
+    checks.append(["name": "cmd_w_closes", "visible_after_reopen": window.isVisible])
     guard let content = window.contentView,
       let quit = descendants(of: content).compactMap({ $0 as? NSButton })
         .first(where: { $0.title == "Quit Live Stems" }) else { throw StemError("Quit button missing") }

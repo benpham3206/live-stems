@@ -32,6 +32,9 @@ uint64_t ls_underruns(LSCore * _Null_unspecified core);
 uint64_t ls_overflows(LSCore * _Null_unspecified core);
 uint32_t ls_queued(LSCore * _Null_unspecified core);
 void ls_flush_output(LSCore * _Null_unspecified core);
+// Plays the queue before the flush point under a (1 - t/T)^4 fade of
+// fade_frames, then jumps; ends early if the old queue runs out.
+void ls_flush_output_faded(LSCore * _Null_unspecified core, uint32_t fade_frames);
 // Returns 1 for a match, 0 for a mismatch, -1 for inconclusive silence.
 void ls_render(LSCore * _Null_unspecified core, uint32_t frames, AudioBufferList * _Null_unspecified output);
 void ls_render_timed(LSCore * _Null_unspecified core, uint32_t frames, AudioBufferList * _Null_unspecified output, const AudioTimeStamp * _Nullable time);

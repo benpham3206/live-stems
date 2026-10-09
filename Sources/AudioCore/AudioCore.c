@@ -19,7 +19,9 @@ struct LSCore {
     LSRenderSnapshot render_trace;
     atomic_ullong flush;
     atomic_ullong flush_sequence;
-    uint64_t render_epoch, applied_flush;
+    atomic_uint flush_fade;
+    uint64_t render_epoch, applied_flush, fade_mark;
+    uint32_t fade_total, fade_done;
     float last_left, last_right, envelope;
     int priming, fade_out;
     float meter_hold[4];
@@ -41,7 +43,8 @@ void ls_reset(LSCore *c){atomic_store(&c->enabled,0);atomic_fetch_add(&c->epoch,
 void ls_controls(LSCore *c,const float *g,uint32_t mute,uint32_t solo){for(int s=0;s<4;s++){uint32_t bits;float v=fmaxf(0,fminf(1,g[s]));memcpy(&bits,&v,4);atomic_store(&c->gains[s],bits);}atomic_store(&c->mute,mute);atomic_store(&c->solo,solo);}
 // The consumer owns read. A producer flush requests a boundary, so a callback
 // already in flight cannot publish an old read index over a new one.
-void ls_flush_output(LSCore *c){atomic_store(&c->flush,atomic_load(&c->output.write));atomic_fetch_add(&c->flush_sequence,1);}
+void ls_flush_output_faded(LSCore *c,uint32_t fade_frames){atomic_store(&c->flush_fade,fade_frames);atomic_store(&c->flush,atomic_load(&c->output.write));atomic_fetch_add(&c->flush_sequence,1);}
+void ls_flush_output(LSCore *c){ls_flush_output_faded(c,0);}
 uint64_t ls_played(LSCore *c){return atomic_load(&c->played);}
 uint64_t ls_underruns(LSCore *c){return atomic_load(&c->underruns);}
 uint64_t ls_overflows(LSCore *c){return atomic_load(&c->overflows);}
@@ -88,17 +91,31 @@ uint32_t ls_output_write_timed(LSCore *c,const float *data,uint32_t n,uint64_t s
 static int next_frame(LSCore *c,float *left,float *right){
     *left=*right=0; if(!atomic_load(&c->enabled))return 0;
     uint64_t epoch=atomic_load(&c->epoch);
-    if(epoch!=c->render_epoch){c->render_epoch=epoch;c->last_left=c->last_right=c->envelope=0;c->stem_blend=atomic_load(&c->stems)?1:0;c->priming=1;c->fade_out=0;}
+    if(epoch!=c->render_epoch){c->render_epoch=epoch;c->last_left=c->last_right=c->envelope=0;c->stem_blend=atomic_load(&c->stems)?1:0;c->priming=1;c->fade_out=0;c->fade_total=0;}
     Ring *r=&c->output;uint64_t pos=atomic_load(&r->read);
     uint64_t sequence=atomic_load(&c->flush_sequence);
     uint64_t flush=atomic_load(&c->flush);
     uint64_t end=atomic_load(&r->write);
     if(sequence!=c->applied_flush){
         c->applied_flush=sequence;
-        if(flush>pos){pos=flush;atomic_store(&r->read,pos);}
-        // Keep the last rendered sample and fade it over ~2 ms. The queue
-        // is already gone, so this only softens the cut edge, never audio.
-        c->priming=1;c->envelope=0;c->fade_out=96;
+        uint32_t fade=atomic_load(&c->flush_fade);
+        // A faded flush plays the queue before the flush point under a fade,
+        // as Spotify fades a pause or skip, and jumps when the fade ends.
+        if(fade && flush>pos && !c->priming){
+            if(!c->fade_total){c->fade_total=fade;c->fade_done=0;}
+            c->fade_mark=flush;
+        }else{
+            c->fade_total=0;
+            if(flush>pos){pos=flush;atomic_store(&r->read,pos);}
+            // Keep the last rendered sample and fade it over ~2 ms. The queue
+            // is already gone, so this only softens the cut edge, never audio.
+            c->priming=1;c->envelope=0;c->fade_out=96;
+            c->render_trace=(LSRenderSnapshot){.source_frame=UINT64_MAX};
+        }
+    }
+    if(c->fade_total && (pos>=c->fade_mark || c->fade_done>=c->fade_total)){
+        if(c->fade_mark>pos){pos=c->fade_mark;atomic_store(&r->read,pos);}
+        c->fade_total=0;c->priming=1;c->envelope=0;c->fade_out=0;c->last_left=c->last_right=0;
         c->render_trace=(LSRenderSnapshot){.source_frame=UINT64_MAX};
     }
     uint32_t prime=(uint32_t)(c->rate*.05);
@@ -149,6 +166,8 @@ static int next_frame(LSCore *c,float *left,float *right){
     float fallback=c->stem_blend*c->smooth[3]+(1-c->stem_blend);
     *left=(*left*weight+f[8]*fallback*(1-weight))*c->envelope;
     *right=(*right*weight+f[9]*fallback*(1-weight))*c->envelope;
+    // Spotify's fade shape, measured with skip-probe: gain (1 - t/T)^4.
+    if(c->fade_total){float t=1-(float)c->fade_done++/(float)c->fade_total,g=t*t*t*t;*left*=g;*right*=g;}
     c->last_left=*left;c->last_right=*right;
     c->render_trace.source_frame=c->output_frames[pos%r->capacity];c->render_trace.capture_nanos=c->output_times[pos%r->capacity];
     atomic_store(&r->read,pos+1);atomic_fetch_add(&c->played,1);return 1;

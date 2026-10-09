@@ -376,6 +376,53 @@ enum StreamMixerChecks {
     return ["seed": seed, "events": events, "settled_latency_ms": Double(latency) / 44.1,
       "late_results": pipeline.lateResults, "accepted": pipeline.acceptedResults]
   }
+  /// Pause and skip fade out from the notice like Spotify, (1 - t/T)^4, with
+  /// no click, and are silent once the fade ends.
+  static func fades() throws -> [String: Any] {
+    var report = [String: Any]()
+    for (name, fadeFrames) in [("pause", StemPipeline.pauseFadeFrames), ("skip", StemPipeline.skipFadeFrames)] {
+      guard let core = ls_create(44100, 44100) else { throw StemError("Cannot allocate fade core") }
+      defer { ls_destroy(core) }
+      let pipeline = StemPipeline(core: core)
+      pipeline.start(generation: 1)
+      var host = 1000.0, track = 0, playing = true, position = 30.0
+      func notice() {
+        _ = pipeline.observe(PlaybackSnapshot(trackID: "t\(track)", title: "T", duration: 240, position: position,
+          isPlaying: playing), hostTime: host)
+      }
+      func tick() -> [Float] {
+        host += 0.01
+        if playing {
+          position += 0.01
+          let from = pipeline.end
+          pipeline.ingest((0..<441).flatMap { [sine(at: from + $0), sine(at: from + $0)] }, hostTime: host)
+        }
+        pipeline.step()
+        let mix = StreamE2E.readMix(core, frames: 441).samples
+        return stride(from: 0, to: 882, by: 2).map { mix[$0] }
+      }
+      notice()
+      ls_enable(core, 1)
+      for _ in 0..<200 { _ = tick() }  // settle at the steady delay
+      if name == "pause" { playing = false } else { track += 1 }
+      notice()
+      let after = (0..<(fadeFrames / 441 + 4)).flatMap { _ in tick() }
+      var worst: Float = 0
+      for block in 0..<fadeFrames / 441 {
+        let expected = 0.5 * pow(1 - Float(block * 441) / Float(fadeFrames), 4)
+        let peak = after[block * 441..<(block + 1) * 441].map(abs).max()!
+        worst = max(worst, abs(peak - expected))
+      }
+      let maxStep: Float = zip(after, after.dropFirst()).map { abs($1 - $0) }.max()!
+      let silentFrom = (fadeFrames / 441 + 1) * 441
+      let tail: Float = after[silentFrom...].map { abs($0) }.max()!
+      guard worst < 0.03 else { throw StemError("\(name) fade strayed \(worst) from Spotify's curve") }
+      guard maxStep < 0.035 else { throw StemError("\(name) fade clicked: step \(maxStep)") }
+      guard tail < 0.001 else { throw StemError("\(name) still sounded after its fade: \(tail)") }
+      report[name] = ["fade_ms": Double(fadeFrames) / 44.1, "max_curve_error": worst, "max_step": maxStep]
+    }
+    return report
+  }
   static func sine(at frame: Int) -> Float {
     Float(sin(Double(frame) * 2 * .pi * 440 / 44100)) * 0.5
   }
