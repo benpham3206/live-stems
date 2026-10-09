@@ -237,6 +237,33 @@ enum MenuE2E {
     pump()
     try require(window.isVisible, "Activating the app did not bring the closed panel back")
     checks.append(["name": "activation_shows_panel"])
+    // Cmd+1-4 step a stem through default, muted, soloed, default.
+    func command(_ key: String) -> NSEvent {
+      NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: window.windowNumber,
+        context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: 0)!
+    }
+    let stemNames = ["Vocals", "Drums", "Bass", "Other"]
+    for (index, name) in stemNames.enumerated() {
+      let mute = try control(named: "\(name) Mute", in: window), solo = try control(named: "\(name) Solo", in: window)
+      var seen = [String]()
+      for _ in 0..<4 {
+        try require(window.performKeyEquivalent(with: command("\(index + 1)")), "Cmd+\(index + 1) was not handled")
+        seen.append("\(mute.state == .on ? "M" : "-")\(solo.state == .on ? "S" : "-")")
+        let bit: UInt32 = 1 << UInt32(index), heard = controller.e2eControls
+        try require((heard.mute & bit != 0) == (mute.state == .on) && (heard.solo & bit != 0) == (solo.state == .on),
+          "Cmd+\(index + 1): the mix and the buttons disagree for \(name)")
+      }
+      try require(seen == ["M-", "-S", "--", "M-"], "Cmd+\(index + 1) cycled \(name) as \(seen)")
+      try require(window.performKeyEquivalent(with: command("\(index + 1)")) && window.performKeyEquivalent(with: command("\(index + 1)")),
+        "Cmd+\(index + 1) stopped handling keys")
+      try require(mute.state == .off && solo.state == .off, "Cmd+\(index + 1) did not return \(name) to default")
+    }
+    for name in stemNames {  // the other stems stayed untouched by each other's cycle
+      let mute = try control(named: "\(name) Mute", in: window)
+      try require(mute.state == .off, "\(name) left muted")
+    }
+    checks.append(["name": "cmd_1_to_4_cycle_stems"])
     // Switching to another app hides the panel; the toggle keeps it up.
     Visibility.reset()
     defer { Visibility.reset() }

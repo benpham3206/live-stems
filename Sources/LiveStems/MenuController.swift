@@ -1,10 +1,11 @@
 import AppKit
 import OSLog
 
-/// The app has no menu bar to carry Cmd+W (close) and Cmd+Q (quit), so the
-/// panel handles them itself.
+/// The app has no menu bar to carry Cmd+W (close), Cmd+Q (quit) and Cmd+1-4
+/// (cycle a stem), so the panel handles them itself.
 final class PanelWindow: NSWindow {
   var quit: () -> Void = {}
+  var cycleStem: (Int) -> Void = { _ in }
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     guard event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {
       return super.performKeyEquivalent(with: event)
@@ -12,6 +13,7 @@ final class PanelWindow: NSWindow {
     switch event.charactersIgnoringModifiers {
     case "w": performClose(nil)
     case "q": quit()
+    case "1", "2", "3", "4": cycleStem(Int(event.charactersIgnoringModifiers!)! - 1)
     default: return super.performKeyEquivalent(with: event)
     }
     return true
@@ -52,6 +54,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     window.delegate = self
     window.quit = { [weak self] in self?.quitApp() }
+    window.cycleStem = { [weak self] in self?.cycleStem($0) }
     window.level = .floating
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
@@ -111,6 +114,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   }
   var e2eStatusButton: NSStatusBarButton? { item.button }
   var e2eWindow: NSWindow? { window }
+  var e2eControls: StemControls { controls }
   func e2eApplyStatusForTest(enabled: Bool) {
     applyStatus(text: "E2E", output: "E2E", enabled: enabled, stems: true)
   }
@@ -209,6 +213,23 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       if sender.state == .on { controls.mute |= mask } else { controls.mute &= ~mask }
     } else {
       if sender.state == .on { controls.solo |= mask } else { controls.solo &= ~mask }
+    }
+    applyControls()
+  }
+  /// Cmd+1-4: default, then muted, then soloed, then default again.
+  private func cycleStem(_ index: Int) {
+    let strip = panel.strips[index], mask: UInt32 = 1 << UInt32(index)
+    if strip.mute.state == .on {
+      strip.mute.state = .off
+      strip.solo.state = .on
+      controls.mute &= ~mask
+      controls.solo |= mask
+    } else if strip.solo.state == .on {
+      strip.solo.state = .off
+      controls.solo &= ~mask
+    } else {
+      strip.mute.state = .on
+      controls.mute |= mask
     }
     applyControls()
   }
