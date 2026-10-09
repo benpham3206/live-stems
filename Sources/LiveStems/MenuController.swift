@@ -1,13 +1,24 @@
 import AppKit
 import OSLog
 
+/// The panel closes on Cmd+W like any window. The app has no menu bar to
+/// carry that shortcut, so the window handles it itself.
+final class PanelWindow: NSWindow {
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    guard event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+      event.charactersIgnoringModifiers == "w" else { return super.performKeyEquivalent(with: event) }
+    performClose(nil)
+    return true
+  }
+}
+
 final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate {
   private var item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let session = SessionController()
   private var relaying = false
   private let activatesOnStatusClick: Bool
   private let terminate: () -> Void
-  private let window = NSWindow(
+  private let window = PanelWindow(
     contentRect: NSRect(origin: .zero, size: ControlsPanel.size),
     styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered,
     defer: false)
