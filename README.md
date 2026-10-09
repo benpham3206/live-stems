@@ -196,6 +196,9 @@ skip and pause detection, a bounded history, and one fixed playback clock that n
 drifts (about 0.31 s from capture to speaker). The design, numbers and test plan are in
 [docs/internals.md](docs/internals.md).
 
+To check a change, run `bash outputs/live-stems-source/script/verify.sh` from `~/LiveStems`. It builds
+the app and runs the checks that need no GPU, signing or audio permission. Exit 0 means they passed.
+
 ## Credits and disclaimer
 
 Live Stems is an unofficial personal project by Ben Pham. It isn't affiliated with, endorsed by, or
