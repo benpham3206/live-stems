@@ -237,12 +237,27 @@ enum MenuE2E {
     pump()
     try require(window.isVisible, "Activating the app did not bring the closed panel back")
     checks.append(["name": "activation_shows_panel"])
+    // Switching to another app hides the panel; the toggle keeps it up.
+    Visibility.reset()
+    defer { Visibility.reset() }
+    controller.appResigned()
+    try require(!window.isVisible, "Switching apps did not hide the panel")
+    controller.appActivated()
+    pump()
+    try require(window.isVisible, "Switching back did not show the panel")
+    let hideToggle = controller.dockMenu().items[2]
+    _ = NSApp.sendAction(hideToggle.action!, to: hideToggle.target, from: hideToggle)
+    try require(!Visibility.hideWhenInactive, "Toggle did not turn off hiding")
+    controller.appResigned()
+    try require(window.isVisible, "Panel hid although the toggle is off")
+    Visibility.reset()
+    checks.append(["name": "hide_when_switching_apps"])
     // Dock and menu bar toggles: at least one must stay on.
     Visibility.reset()
     defer { Visibility.reset() }
     let toggles = controller.dockMenu().items
-    try require(toggles.map(\.title) == ["Show in Dock", "Show in Menu Bar"], "Visibility menu items changed")
-    try require(toggles.allSatisfy { controller.validateMenuItem($0) && $0.state == .on }, "Both start on and enabled")
+    try require(toggles.map(\.title) == ["Show in Dock", "Show in Menu Bar", "Hide When Switching Apps"], "Visibility menu items changed")
+    try require(toggles.allSatisfy { controller.validateMenuItem($0) && $0.state == .on }, "All toggles start on and enabled")
     _ = NSApp.sendAction(toggles[0].action!, to: toggles[0].target, from: toggles[0])
     try require(!Visibility.dock && Visibility.menuBar, "Dock toggle did not hide the Dock icon")
     try require(!controller.validateMenuItem(toggles[1]), "Menu bar toggle stayed enabled with the Dock off")

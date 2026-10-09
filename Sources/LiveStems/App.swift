@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return .terminateCancel
   }
   func applicationDidBecomeActive(_ notification: Notification) { menu?.appActivated() }
+  func applicationDidResignActive(_ notification: Notification) { menu?.appResigned() }
   func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { menu?.dockMenu() }
   func applicationWillTerminate(_ notification: Notification) { menu?.shutdown() }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

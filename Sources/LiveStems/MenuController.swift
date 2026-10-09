@@ -259,7 +259,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   /// Menu for the status item and the Dock icon.
   func dockMenu() -> NSMenu {
     let menu = NSMenu()
-    for (title, action) in [("Show in Dock", #selector(toggleDock)), ("Show in Menu Bar", #selector(toggleMenuBar))] {
+    for (title, action) in [("Show in Dock", #selector(toggleDock)), ("Show in Menu Bar", #selector(toggleMenuBar)),
+      ("Hide When Switching Apps", #selector(toggleHideWhenInactive))] {
       let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
       entry.target = self
       menu.addItem(entry)
@@ -285,8 +286,12 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     Visibility.setMenuBar(!Visibility.menuBar)
     applyVisibility()
   }
+  @objc private func toggleHideWhenInactive() { Visibility.hideWhenInactive.toggle() }
   func validateMenuItem(_ entry: NSMenuItem) -> Bool {
     switch entry.action {
+    case #selector(toggleHideWhenInactive):
+      entry.state = Visibility.hideWhenInactive ? .on : .off
+      return true
     case #selector(toggleDock):
       entry.state = Visibility.dock ? .on : .off
       return !Visibility.dock || Visibility.menuBar
@@ -323,6 +328,11 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   func appActivated() {
     guard !relaying else { return }
     if window.isVisible { window.makeKeyAndOrderFront(nil) } else { showPanel() }
+  }
+  /// Another app came forward: tuck the panel away, as a menu bar popover would.
+  func appResigned() {
+    guard Visibility.hideWhenInactive, !relaying, window.isVisible else { return }
+    window.orderOut(nil)
   }
   func enable() { session.start() }
   func shutdown() { session.shutdownSync() }
