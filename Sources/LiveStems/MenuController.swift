@@ -18,10 +18,12 @@ final class PanelWindow: NSWindow {
   }
 }
 
-final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate {
+final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuItemValidation {
   private var item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
   private let session = SessionController()
   private var relaying = false
+  /// True once the quit relay has finished; only then may the app really terminate.
+  private(set) var canTerminate = false
   private let activatesOnStatusClick: Bool
   private let terminate: () -> Void
   private let window = PanelWindow(
@@ -234,7 +236,65 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate {
     item.button?.imagePosition = .imageLeading
     item.button?.setAccessibilityLabel("Live Stems")
     item.button?.target = self
-    item.button?.action = #selector(showPanel)
+    item.button?.action = #selector(statusClicked)
+    item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    item.isVisible = Visibility.menuBar
+  }
+  /// A plain click opens the panel; right-click or control-click offers the visibility toggles.
+  @objc private func statusClicked() {
+    let event = NSApp.currentEvent
+    guard event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true else { return showPanel() }
+    item.menu = dockMenu()
+    item.button?.performClick(nil)
+    item.menu = nil
+  }
+  // MARK: Dock and menu bar visibility
+  /// Applies the saved choice. E2E controllers skip the policy so tests never change the app.
+  func applyVisibility() {
+    item.isVisible = Visibility.menuBar
+    guard activatesOnStatusClick else { return }
+    NSApp.setActivationPolicy(Visibility.dock ? .regular : .accessory)
+    NSApp.mainMenu = appMenu()
+  }
+  /// Menu for the status item and the Dock icon.
+  func dockMenu() -> NSMenu {
+    let menu = NSMenu()
+    for (title, action) in [("Show in Dock", #selector(toggleDock)), ("Show in Menu Bar", #selector(toggleMenuBar))] {
+      let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
+      entry.target = self
+      menu.addItem(entry)
+    }
+    return menu
+  }
+  /// The menu bar shown while the Dock icon is on; carries Cmd+W and Cmd+Q.
+  private func appMenu() -> NSMenu {
+    let bar = NSMenu(), holder = NSMenuItem(), menu = dockMenu()
+    menu.title = "Live Stems"
+    menu.addItem(.separator())
+    menu.addItem(NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+    menu.addItem(NSMenuItem(title: "Quit Live Stems", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    holder.submenu = menu
+    bar.addItem(holder)
+    return bar
+  }
+  @objc private func toggleDock() {
+    Visibility.setDock(!Visibility.dock)
+    applyVisibility()
+  }
+  @objc private func toggleMenuBar() {
+    Visibility.setMenuBar(!Visibility.menuBar)
+    applyVisibility()
+  }
+  func validateMenuItem(_ entry: NSMenuItem) -> Bool {
+    switch entry.action {
+    case #selector(toggleDock):
+      entry.state = Visibility.dock ? .on : .off
+      return !Visibility.dock || Visibility.menuBar
+    case #selector(toggleMenuBar):
+      entry.state = Visibility.menuBar ? .on : .off
+      return !Visibility.menuBar || Visibility.dock
+    default: return true
+    }
   }
   @objc private func quitApp() {
     relaying = true
@@ -242,11 +302,17 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate {
     window.orderOut(nil)
     NSStatusBar.system.removeStatusItem(item)
     resetControls()  // a reopen starts from Original with the model asleep
-    session.quit(completion: terminate)
+    session.quit { [weak self] in
+      self?.canTerminate = true
+      self?.terminate()
+    }
   }
+  /// Quit as the Quit button does: relay the audio back, then terminate.
+  func requestQuit() { quitApp() }
   func reopen() {
     if relaying {
       relaying = false
+      canTerminate = false
       item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
       configureStatusItem()
       session.cancelQuit()

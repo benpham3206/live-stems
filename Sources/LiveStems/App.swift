@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
     menu = MenuController()
+    menu?.applyVisibility()
     // Arm at launch: capture runs with Spotify still direct, and the model
     // sleeps until a control needs stems. Takeover waits for a natural break.
     menu?.enable()
@@ -21,6 +22,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         to: LocalSettings.runtime.appendingPathComponent("app.pid"))
     }
   }
+  /// Cmd+Q, Cmd+Tab Quit and the Dock's Quit take the Quit button's path first.
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard let menu, !menu.canTerminate else { return .terminateNow }
+    menu.requestQuit()
+    return .terminateCancel
+  }
+  func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { menu?.dockMenu() }
   func applicationWillTerminate(_ notification: Notification) { menu?.shutdown() }
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
     menu?.reopen()

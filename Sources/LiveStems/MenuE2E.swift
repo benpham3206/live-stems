@@ -217,6 +217,32 @@ enum MenuE2E {
     controller.reopen()
     pump()
     checks.append(["name": "cmd_q_quits", "completion_count": quitCompletions])
+    // Cmd+Tab Quit and the Dock's Quit call terminate: the first call must relay, the next may exit.
+    let delegate = AppDelegate()
+    delegate.menu = controller
+    let completionsBefore = quitCompletions
+    try require(delegate.applicationShouldTerminate(app) == .terminateCancel, "Terminate skipped the quit relay")
+    pump()
+    try require(quitCompletions == completionsBefore + 1, "Terminate did not run the Quit path once")
+    try require(delegate.applicationShouldTerminate(app) == .terminateNow, "Terminate stayed blocked after the relay")
+    controller.reopen()
+    pump()
+    try require(window.isVisible, "Reopen after terminate did not restore controls")
+    checks.append(["name": "terminate_uses_quit_path"])
+    // Dock and menu bar toggles: at least one must stay on.
+    Visibility.reset()
+    defer { Visibility.reset() }
+    let toggles = controller.dockMenu().items
+    try require(toggles.map(\.title) == ["Show in Dock", "Show in Menu Bar"], "Visibility menu items changed")
+    try require(toggles.allSatisfy { controller.validateMenuItem($0) && $0.state == .on }, "Both start on and enabled")
+    _ = NSApp.sendAction(toggles[0].action!, to: toggles[0].target, from: toggles[0])
+    try require(!Visibility.dock && Visibility.menuBar, "Dock toggle did not hide the Dock icon")
+    try require(!controller.validateMenuItem(toggles[1]), "Menu bar toggle stayed enabled with the Dock off")
+    try require(!Visibility.setMenuBar(false) && Visibility.menuBar, "Hiding both was allowed")
+    _ = NSApp.sendAction(toggles[0].action!, to: toggles[0].target, from: toggles[0])
+    _ = NSApp.sendAction(toggles[1].action!, to: toggles[1].target, from: toggles[1])
+    try require(Visibility.dock && !Visibility.menuBar, "Menu bar toggle did not hide the status item")
+    checks.append(["name": "dock_and_menu_bar_toggles"])
     return checks
   }
   static func snapshot(_ out: URL) throws {
