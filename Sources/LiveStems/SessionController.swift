@@ -14,7 +14,7 @@ final class SessionController {
   private var token: UInt64 = 0, job: UInt64 = 0, busy = false, enabled = false,
     outputOn = false, stemsSelected = true, warmupsLeft = 0
   private var awaitingFirstAudio = false, cutHost = 0.0
-  private var stemsWantedAt: Double?  // stems wanted before takeover: waiting for (or making) a break
+  private var takeoverRequestedAt: Double?  // waiting for (or making) a takeover break
   private var controls = StemControls(), began = 0.0, capturePeak: Float = 0,
     lastCaptureEndHost = 0.0
   private var lastDeviceCheck = 0.0, lastDiagnostics = 0.0, lastStatus = ""
@@ -22,6 +22,9 @@ final class SessionController {
   private var lastTrace = 0.0
   private var quitCompletion: (() -> Void)?
   private var quitVersion: UInt64 = 0, quitStarted = 0.0
+  // A running session is real-time work: without this, App Nap can coalesce the
+  // 10 ms tick when no audio plays (before takeover, between sessions).
+  private var activity: NSObjectProtocol?
   var onReady: (() -> Void)?
   var onStatus: ((String, String, Bool, Bool) -> Void)?
   init(traceDirectory: URL = LocalSettings.evidence, spotifyState: SpotifyState = SpotifyState(),
@@ -52,6 +55,8 @@ final class SessionController {
     queue.async {
       guard !self.enabled else { return }
       self.enabled = true
+      self.activity = ProcessInfo.processInfo.beginActivity(
+        options: [.userInitiated, .latencyCritical], reason: "Live Stems real-time audio")
       self.stemsSelected = true
       self.token += 1
       let token = self.token
@@ -60,7 +65,7 @@ final class SessionController {
     }
   }
   private func startProcessor(token: UInt64) {
-      busy = true
+    busy = true
     self.status(audio == nil ? "\(source.name) · starting" : "Original · restarting processor")
     let worker = WorkerClient()
     self.worker = worker
@@ -157,42 +162,11 @@ final class SessionController {
         throw StemError("\(source.name) capture silent · direct playback restored")
       }
       pipeline.step()
-      // Quit hands back to the source app at a break: a Spotify pause (after the
-      // queued tail drains), or for other apps a quiet moment, at most 3 s later.
-      let quitReady = pipeline.paused ? ls_queued(audio.core) == 0
-        : spotify == nil && (pipeline.quietFrames >= 11025 || stemClock() - quitStarted > 3)
-      if quitCompletion != nil, quitReady {
+      if quitCompletion != nil, quitReady(audio, pipeline) {
         finishQuit()
         return
       }
-      // The source app plays directly until a break, where the 0.3 s shift is
-      // silent: a pause, a skip or seek (Spotify notices), or 250 ms of quiet
-      // audio (any app). Stems wanted before a break: Spotify is paused for a
-      // blink; other apps get up to 3 s to go quiet, then a dip (a 0.3 s gap
-      // that fades back in). Never a replay or a speed change.
-      let atBreak = pipeline.paused || pipeline.breakPending || pipeline.quietFrames >= 11025
-      if !outputOn, !pipeline.resting, !atBreak, stemsWantedAt == nil {
-        stemsWantedAt = stemClock()
-        spotify?.command("pause")
-        trace.record(TraceRecord(event: spotify == nil ? "await-quiet" : "self-pause",
-          generation: token, sourceFrame: pipeline.end))
-      }
-      let waited = stemsWantedAt.map { stemClock() - $0 > (spotify == nil ? 3 : 2) } ?? false
-      if !outputOn, atBreak || waited {
-        // Mute first: if macOS refuses, nothing has moved yet.
-        try audio.setOriginalSuppressed(true)
-        pipeline.takeOverAtBreak(fadeIn: !atBreak)
-        pipeline.step()
-        // Always undo our own pause, even if its notice never came: the commands
-        // run in order on one queue, so Spotify can never be left paused by us.
-        if stemsWantedAt != nil { spotify?.command("play") }
-        stemsWantedAt = nil
-        audio.setOutputEnabled(true)
-        outputOn = true
-        trace.record(TraceRecord(event: "handoff", generation: token,
-          sourceFrame: pipeline.outputPosition, queuedFrames: ls_queued(audio.core), outputBufferFrames: audio.outputBufferFrames))
-        DispatchQueue.main.async { self.onReady?() }
-      }
+      if !outputOn { try takeOverIfReady(audio, pipeline) }
       startJob()
       startWarmup()
       guard enabled else { return }
@@ -226,6 +200,43 @@ final class SessionController {
         capturePeak = 0
       }
     } catch { end(error.localizedDescription) }
+  }
+  /// Quit hands back to the source app at a break: a Spotify pause (after the
+  /// queued tail drains), or for other apps a quiet moment, at most 3 s later.
+  private func quitReady(_ audio: AudioSession, _ pipeline: StemPipeline) -> Bool {
+    if pipeline.paused { return ls_queued(audio.core) == 0 }
+    return spotify == nil && (pipeline.quietFrames >= 11025 || stemClock() - quitStarted > 3)
+  }
+  /// A session takes over from the source app as soon as it starts (the app
+  /// starts one at launch), so a later mix change never has to. It uses a
+  /// break where the 0.3 s shift is silent: a pause, a skip or seek (Spotify
+  /// notices), or 250 ms of quiet audio (any app). With none at hand, Spotify is
+  /// paused for a blink; other apps get up to 3 s to go quiet, then a dip (a
+  /// 0.3 s gap that fades back in). Never a replay or a speed change.
+  private func takeOverIfReady(_ audio: AudioSession, _ pipeline: StemPipeline) throws {
+    let atBreak = pipeline.paused || pipeline.breakPending || pipeline.quietFrames >= 11025
+    if !atBreak, takeoverRequestedAt == nil {
+      takeoverRequestedAt = stemClock()
+      spotify?.command("pause")
+      trace.record(TraceRecord(event: spotify == nil ? "await-quiet" : "self-pause",
+        generation: token, sourceFrame: pipeline.end))
+    }
+    let waited = takeoverRequestedAt.map { stemClock() - $0 > 3 } ?? false
+    guard atBreak || waited else { return }
+    // Mute first: if macOS refuses, nothing has moved yet.
+    try audio.setOriginalSuppressed(true)
+    pipeline.takeOverAtBreak(fadeIn: !atBreak)
+    pipeline.step()
+    // Always undo our own pause, even if its notice never came: the commands
+    // run in order on one queue, so Spotify can never be left paused by us.
+    if takeoverRequestedAt != nil { spotify?.command("play") }
+    takeoverRequestedAt = nil
+    audio.setOutputEnabled(true)
+    outputOn = true
+    trace.record(TraceRecord(event: "handoff", generation: token,
+      sourceFrame: pipeline.outputPosition, queuedFrames: ls_queued(audio.core),
+      outputBufferFrames: audio.outputBufferFrames))
+    DispatchQueue.main.async { self.onReady?() }
   }
   private func startJob() {
     guard enabled, !busy, let worker = worker, let pipeline = pipeline,
@@ -310,21 +321,6 @@ final class SessionController {
       return gain == 1 ? "Original · model asleep" : "Original at \(Int(gain * 100))% · model asleep"
     }
     return pipeline.statusText
-    return "Original mix"
-  }
-  func toggleMix() {
-    queue.async {
-      guard self.enabled, let audio = self.audio, let pipeline = self.pipeline else { return }
-      self.stemsSelected.toggle()
-      self.trace.record(TraceRecord(event: "mix", generation: pipeline.generation,
-        sourceFrame: pipeline.outputPosition, stemsSelected: self.stemsSelected))
-      ls_stems(audio.core, self.stemsSelected ? 1 : 0)
-      self.applyControls()
-      if self.stemsSelected, self.worker == nil { self.startProcessor(token: self.token) }
-      self.lastStatus = ""
-      self.status(self.mixStatus(pipeline))
-      self.saveDiagnostics()
-    }
   }
   /// Back to the stem splitter from Original or a stopped worker: stems are
   /// selected, a worker starts if none runs, and Original fades into stems.
@@ -345,15 +341,19 @@ final class SessionController {
       guard self.enabled, let audio = self.audio, let pipeline = self.pipeline else {
         self.end("\(self.source.name) · direct playback"); return
       }
-      self.stemsSelected = false
-      ls_stems(audio.core, 0)
-      self.worker?.stop(); self.worker = nil; self.busy = false
-      pipeline.resetProcessor()
+      self.stopProcessor(audio, pipeline)
       self.trace.record(TraceRecord(event: "mix", generation: pipeline.generation,
         sourceFrame: pipeline.outputPosition, stemsSelected: false))
       self.status("Original mix · processor stopped")
       self.saveDiagnostics()
     }
+  }
+  /// Original only, worker stopped; capture and the playback clock keep running.
+  private func stopProcessor(_ audio: AudioSession, _ pipeline: StemPipeline) {
+    stemsSelected = false
+    ls_stems(audio.core, 0)
+    worker?.stop(); worker = nil; busy = false
+    pipeline.resetProcessor()
   }
   private func saveDiagnostics() {
     guard let audio = audio, let p = pipeline else { return }
@@ -384,6 +384,8 @@ final class SessionController {
     quitCompletion = nil
     trace.record(TraceRecord(event: "stop", generation: token, sourceFrame: pipeline?.outputPosition, reason: message))
     enabled = false
+    if let activity { ProcessInfo.processInfo.endActivity(activity) }
+    activity = nil
     token += 1
     timer?.cancel()
     timer = nil
@@ -398,7 +400,6 @@ final class SessionController {
     worker?.stop()
     worker = nil
     busy = false
-    outputOn = false
     status(message)
     if let completion {
       let version = quitVersion
@@ -419,10 +420,7 @@ final class SessionController {
       guard self.enabled, self.outputOn, let audio = self.audio, let pipeline = self.pipeline else {
         self.finishQuit(); return
       }
-      self.stemsSelected = false
-      ls_stems(audio.core, 0)
-      self.worker?.stop(); self.worker = nil; self.busy = false
-      pipeline.resetProcessor()
+      self.stopProcessor(audio, pipeline)
       self.trace.record(TraceRecord(event: "quit-relay", generation: self.token,
         sourceFrame: pipeline.outputPosition, queuedFrames: ls_queued(audio.core), stemsSelected: false))
       self.saveDiagnostics()

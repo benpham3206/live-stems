@@ -225,4 +225,59 @@ enum MenuE2E {
     }
     print("PASS snapshot · panel-light.png, panel-dark.png")
   }
+
+  /// 3000 random clicks on every panel control. After each one the buttons must
+  /// agree with each other; Reset must clear everything. No audio session runs.
+  static func spam(_ out: URL) throws {
+    let saved = AudioSource.saved
+    defer { AudioSource.saved = saved }
+    let controller = MenuController(activateOnStatusClick: false, terminate: {}, start: {})
+    guard let window = controller.e2eWindow, let content = window.contentView else {
+      throw StemError("Spam has no panel")
+    }
+    let views = descendants(of: content)
+    func button(_ label: String) throws -> NSButton { try control(named: label, in: window) }
+    let names = ["Vocals", "Drums", "Bass", "Other"]
+    let mutes = try names.map { try button("\($0) Mute") }, solos = try names.map { try button("\($0) Solo") }
+    let muteAll = try button("Mute all"), clearSolo = try button("Clear all solos")
+    guard let reset = views.compactMap({ $0 as? NSButton }).first(where: { $0.title == "Reset" }),
+      let picker = views.compactMap({ $0 as? NSPopUpButton }).first else { throw StemError("Spam lacks Reset or picker") }
+    let sliders = views.compactMap { $0 as? NSSlider }
+    guard sliders.count == 4 else { throw StemError("Spam found \(sliders.count) sliders") }
+    var seed: UInt64 = 7
+    func roll(_ n: Int) -> Int { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Int((seed >> 33) % UInt64(n)) }
+    var counts = [String: Int]()
+    for click in 0..<3000 {
+      let action = roll(7)
+      switch action {
+      case 0: mutes[roll(4)].performClick(nil)
+      case 1: solos[roll(4)].performClick(nil)
+      case 2: muteAll.performClick(nil)
+      case 3: clearSolo.performClick(nil)
+      case 4: reset.performClick(nil)
+      case 5:
+        let slider = sliders[roll(4)]
+        slider.floatValue = Float(roll(101)) / 100
+        slider.sendAction(slider.action, to: slider.target)
+      default:
+        picker.selectItem(at: roll(picker.numberOfItems))
+        picker.sendAction(picker.action, to: picker.target)
+      }
+      counts[["mute", "solo", "mute_all", "clear_solo", "reset", "slider", "source"][action], default: 0] += 1
+      let allMuted = mutes.allSatisfy { $0.state == .on }, anySolo = solos.contains { $0.state == .on }
+      guard muteAll.state == (allMuted ? .on : .off), clearSolo.state == (anySolo ? .on : .off) else {
+        throw StemError("Click \(click): All M or clear-solo disagrees with the stem buttons")
+      }
+      if action == 4 {
+        guard (mutes + solos).allSatisfy({ $0.state == .off }), sliders.allSatisfy({ $0.floatValue == 1 }) else {
+          throw StemError("Click \(click): Reset left a control changed")
+        }
+      }
+      guard picker.titleOfSelectedItem != nil else { throw StemError("Click \(click): source picker lost its selection") }
+    }
+    let report: [String: Any] = ["status": "pass", "clicks": 3000, "by_control": counts]
+    try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+      .write(to: out.appendingPathComponent("spam.json"))
+    print("PASS spam · 3000 random panel clicks, buttons always consistent")
+  }
 }

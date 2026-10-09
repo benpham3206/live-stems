@@ -67,8 +67,10 @@ Apple Events reads, and the self-pause; other apps work from audio alone.
 
 The app arms at launch: capture and the worker start, the source stays direct, and
 the pipeline commits nothing (holdForBreak), so waiting cannot fill the queue.
-It takes over at the next natural break: while Spotify is paused (silent), or at
-a track change or seek notice. Takeover discards everything already heard, so
+A session takes over as soon as it starts, whatever the mix, so a later mix
+change never has to (a takeover on the first mute was heard as a skip). It uses
+a break if one is at hand: while Spotify is paused (silent), a track change or
+seek notice, or 250 ms of quiet capture. Takeover discards everything already heard, so
 playback resumes from that point after the steady lag and nothing repeats; the
 shift lands on silence or a fresh start. Quit before takeover ends at once.
 

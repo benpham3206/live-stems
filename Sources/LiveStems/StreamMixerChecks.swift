@@ -56,10 +56,15 @@ enum StreamMixerChecks {
     // Hold the next window: the frontier crosses the tail with no result, so
     // the tail estimate must carry those frames as stems, never Original.
     drive(13230)
-    let tailWeights = weight(in: tailStart + 5..<tailEnd - 5)
-    guard tailWeights.count == tailEnd - tailStart - 10,
-      tailWeights.min() ?? 0 > 0.5
+    // Full stems through the tail until its last fadeOut frames; there the gap is
+    // certain, so stems fade out smoothly (never a jump) while data remains.
+    let fadeFrom = tailEnd - pipeline.gate.fadeOut
+    let tailWeights = weight(in: tailStart + 5..<fadeFrom)
+    let fadeWeights = weight(in: fadeFrom..<tailEnd)
+    guard tailWeights.count == fadeFrom - tailStart - 5, tailWeights.min() ?? 0 > 0.5
     else { throw StemError("Late result fell back to Original inside the tail estimate") }
+    guard zip(fadeWeights, fadeWeights.dropFirst()).allSatisfy({ $1 <= $0 && $0 - $1 <= 1 / Float(pipeline.gate.fadeOut) + 1e-6 })
+    else { throw StemError("Tail did not fade out smoothly before the gap") }
     guard events.contains(where: { $0.0 == "provisional-cover" && tailStart..<tailEnd ~= $0.1 }) else {
       throw StemError("Provisional cover left no trace")
     }
@@ -192,7 +197,7 @@ enum StreamMixerChecks {
     }
     observe()
     var pending = [(due: Int, window: AudioWindow)](), entries = 0, maxRise: Float = 0, last: Float = 0
-    var struggleEntries = 0, turns = 0, struggleTurns = 0, peak: Float = 0, rising = false
+    var struggleEntries = 0, turns = 0, struggleTurns = 0, peak: Float = 0, rising = false, maxFall: Float = 0
     pipeline.onCommit = { _, block in
       for f in 0..<block.count / 11 {
         let w = block[f * 11 + 10]
@@ -200,7 +205,7 @@ enum StreamMixerChecks {
         // A turn is a rise of 0.05 or more followed by a fall of 0.05 or more.
         if rising { if w > peak { peak = w } else if peak - w >= 0.05 { turns += 1; rising = false; peak = w } }
         else { if w < peak { peak = w } else if w - peak >= 0.05 { rising = true; peak = w } }
-        maxRise = max(maxRise, w - last); last = w
+        maxRise = max(maxRise, w - last); maxFall = max(maxFall, last - w); last = w
       }
     }
     var answers = 0
@@ -238,10 +243,14 @@ enum StreamMixerChecks {
       throw StemError("Stems fluttered: weight turned down \(struggleTurns) times in 12 s")
     }
     guard last >= 0.999 else { throw StemError("Stems did not come back after the model recovered") }
-    guard maxRise <= 1 / Float(pipeline.entryFade) + 1e-6 else {
+    // Misses fade stems out while data remains: never a jump back to Original.
+    guard maxFall <= 1 / Float(pipeline.gate.fadeOut) + 1e-6 else {
+      throw StemError("Stems dropped by \(maxFall) in one frame; misses must fade out")
+    }
+    guard maxRise <= 1 / Float(pipeline.gate.fade) + 1e-6 else {
       throw StemError("Stems entered too fast: weight rose \(maxRise) in one frame")
     }
-    return ["checked": true, "pass": true, "stem_entries": entries, "struggle_entries": struggleEntries, "struggle_turns": struggleTurns, "late_results": pipeline.lateResults,
+    return ["checked": true, "pass": true, "stem_entries": entries, "struggle_entries": struggleEntries, "struggle_turns": struggleTurns, "max_fall": maxFall, "late_results": pipeline.lateResults,
       "partial_results": pipeline.partialResults, "underruns": ls_underruns(core)]
   }
   // Seeded transition fuzz: skips, seeks, pauses, duplicate notices, model

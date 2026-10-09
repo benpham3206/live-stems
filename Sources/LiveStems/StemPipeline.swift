@@ -31,13 +31,8 @@ final class StemPipeline {
   private var dipFade = 0..<0
   /// The live session holds output for a break; fixtures keep committing at once.
   func holdForBreak() { outputLive = false; breakPending = false }
-  // Stems (re)enter after on-time results, then fade in over entryFade. One
-  // isolated gap, a skip, or a wake needs one on-time result, so a single miss
-  // recovers fast. A second gap within 2 s means the model is struggling: then
-  // entryStreak results in a row are needed, so stems stay on the stem-free mix
-  // instead of flickering against Original ten times a second.
-  let entryFade = 8820, entryStreak = 3
-  private var gated = true, entering = false, onTimeStreak = 0, neededStreak = 1, lastGapFrame = Int.min / 2
+  /// When stems may play after a gap; see StemEntryGate.
+  private(set) var gate = StemEntryGate()
   var timings = [Double]()
   private var history = [Float](), ready = [Chunk]()
   private var provisional: Chunk?
@@ -195,7 +190,7 @@ final class StemPipeline {
     if !value { resetProcessor() }
   }
   func resetProcessor() {
-    closeGate()
+    gate.reset()
     generation += 1; version += 1
     contextStart = max(base, end - windowFrames)
     scheduledEnd = contextStart
@@ -204,16 +199,9 @@ final class StemPipeline {
     onTrace?(TraceRecord(event: "processor-reset", generation: generation, sourceFrame: outputPosition))
   }
   /// E2E fixtures that test seams, not entry, start with stems already admitted.
-  func e2eOpenStemGate() { gated = false; entering = false; onTimeStreak = entryStreak }
-  private func closeGate() { gated = true; entering = false; onTimeStreak = 0; neededStreak = 1 }
-  private func coverageGap(at frame: Int) {
-    let repeated = frame - lastGapFrame < 88200
-    closeGate()
-    if repeated { neededStreak = entryStreak }
-    lastGapFrame = frame
-  }
+  func e2eOpenStemGate() { gate.openForTest() }
   private func resetContext(at frame: Int, flush: Bool, host: Double = stemClock(), scan: Bool = false) {
-    closeGate()
+    gate.reset()
     version += 1; contextStart = frame; scheduledEnd = frame
     ready.removeAll { flush || $0.range.upperBound > frame }
     if flush {
@@ -271,7 +259,6 @@ final class StemPipeline {
     // the commit frontier already played; the rest must not fall back.
     let coreLo = max(job.core.lowerBound, outputPosition)
     if coreLo > job.core.lowerBound {
-      onTimeStreak = 0
       partialResults += 1
       onTrace?(TraceRecord(event: "partial-late", generation: generation, sourceFrame: outputPosition,
         sourceEnd: job.core.upperBound, windowStart: result.range.start, lateFrames: coreLo - job.core.lowerBound))
@@ -316,24 +303,13 @@ final class StemPipeline {
         samples: Array(result.samples[at..<at + (job.window.upperBound - tailLo) * 8]))
     } else { provisional = nil }
     acceptedResults += 1
-    if coreLo == job.core.lowerBound {
-      onTimeStreak += 1
-      if gated, onTimeStreak >= neededStreak { gated = false; entering = true }
-    }
+    if coreLo == job.core.lowerBound { gate.onTimeResult() } else { gate.partialResult() }
     onTrace?(TraceRecord(event: "accepted-result", generation: generation,
       sourceFrame: coreLo, sourceEnd: job.core.upperBound,
       windowStart: result.range.start, deadlineSlackSeconds: Double(job.core.lowerBound - outputPosition) / 44100))
   }
-  /// Weight for a frame that has stems. Gated: fade out slowly. Entering: fade
-  /// in slowly. Otherwise the 10 ms seam blend between neighbouring estimates.
   private func blend(toward target: Float) {
-    if gated { weight = max(0, weight - 1 / Float(entryFade)); return }
-    if entering {
-      weight = min(target, weight + 1 / Float(entryFade))
-      if weight >= 1 { entering = false }
-      return
-    }
-    weight += max(-1 / Float(fade), min(1 / Float(fade), target - weight))
+    weight = gate.weight(from: weight, toward: target, seamStep: 1 / Float(fade))
   }
   private func block(start: Int, count: Int) -> [Float] {
     var samples = [Float](repeating: 0, count: count * 11)
@@ -353,13 +329,16 @@ final class StemPipeline {
         usedProvisional = false
       } else if let tail = provisional, tail.range.contains(frame) {
         // A late result falls back to the previous tail estimate, never to
-        // the full mix. The next result replaces these frames on arrival.
+        // the full mix. The next result replaces these frames on arrival. If
+        // it still has not come with fadeOut frames of tail left, the gap is
+        // certain: start fading now, while there is stem data to fade with.
+        if gate.isOpen, tail.range.upperBound - frame <= gate.fadeOut { gate.miss(at: frame) }
         blend(toward: min(1, max(Float(frame - tail.range.lowerBound + 1) / Float(fade), weight)))
         let offset = (frame - tail.range.lowerBound) * 8
         for channel in 0..<8 { samples[out + channel] = tail.samples[offset + channel] }
         usedProvisional = true
       } else {
-        if weight > 0 { coverageGap(at: frame) }
+        if weight > 0 { gate.miss(at: frame) }
         weight = 0
         usedProvisional = false
       }
