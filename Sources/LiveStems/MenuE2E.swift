@@ -65,8 +65,11 @@ enum MenuE2E {
     // The normal product initializer keeps activation enabled for real clicks.
     var quitCompletions = 0
     var starts = 0
+    var policies = [NSApplication.ActivationPolicy]()
+    Visibility.reset()
     let controller = MenuController(
-      activateOnStatusClick: false, terminate: { quitCompletions += 1 }, start: { starts += 1 })
+      activateOnStatusClick: false, terminate: { quitCompletions += 1 }, start: { starts += 1 },
+      setPolicy: { policies.append($0) })
     guard let status = controller.e2eStatusButton,
       let window = controller.e2eWindow
     else { throw StemError("Menu E2E could not access the AppKit controls") }
@@ -195,6 +198,7 @@ enum MenuE2E {
     quit.performClick(nil)
     pump()
     try require(!window.isVisible, "Quit kept controls visible")
+    try require(policies.last == .accessory, "Quit left the Dock and Cmd+Tab icon up while it relays")
     controller.e2eNotifyReadyForTest()
     pump()
     try require(!window.isVisible, "Readiness reopened Quit controls")
@@ -202,6 +206,7 @@ enum MenuE2E {
     controller.reopen()
     pump()
     try require(window.isVisible, "Relay reopen did not restore controls")
+    try require(policies.last == .regular, "Relay reopen did not bring the Dock icon back")
     try require(drumsMute.state == .off, "Quit did not reset the mix to Original")
     try require(controller.e2eStatusButton?.title == "Stems", "Relay reopen lost its status item")
     try require(app.isActive == launchActive, "Relay E2E stole app focus")
@@ -229,12 +234,67 @@ enum MenuE2E {
     pump()
     try require(window.isVisible, "Reopen after terminate did not restore controls")
     checks.append(["name": "terminate_uses_quit_path"])
+    // Cmd+Tab back to the app after closing the panel: activation alone must bring it back.
+    window.performClose(nil)
+    pump()
+    try require(!window.isVisible, "Close did not hide the panel")
+    controller.appActivated()
+    pump()
+    try require(window.isVisible, "Activating the app did not bring the closed panel back")
+    checks.append(["name": "activation_shows_panel"])
+    // Cmd+1-4 step a stem through default, muted, soloed, default.
+    func command(_ key: String) -> NSEvent {
+      NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: window.windowNumber,
+        context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: 0)!
+    }
+    let stemNames = ["Vocals", "Drums", "Bass", "Other"]
+    for (index, name) in stemNames.enumerated() {
+      let mute = try control(named: "\(name) Mute", in: window), solo = try control(named: "\(name) Solo", in: window)
+      let faders = descendants(of: window.contentView!).compactMap { $0 as? NSSlider }
+      try require(faders.count == 4, "Expected four faders, found \(faders.count)")
+      let fader = faders[index]
+      var seen = [String](), faded = [Bool]()
+      for _ in 0..<4 {
+        try require(window.performKeyEquivalent(with: command("\(index + 1)")), "Cmd+\(index + 1) was not handled")
+        seen.append("\(mute.state == .on ? "M" : "-")\(solo.state == .on ? "S" : "-")")
+        faded.append(fader.alphaValue < 1)
+        let bit: UInt32 = 1 << UInt32(index), heard = controller.e2eControls
+        try require((heard.mute & bit != 0) == (mute.state == .on) && (heard.solo & bit != 0) == (solo.state == .on),
+          "Cmd+\(index + 1): the mix and the buttons disagree for \(name)")
+      }
+      try require(seen == ["M-", "-S", "--", "M-"], "Cmd+\(index + 1) cycled \(name) as \(seen)")
+      try require(faded == [true, false, false, true], "Cmd+\(index + 1): \(name) fades \(faded), expected muted only")
+      try require(window.performKeyEquivalent(with: command("\(index + 1)")) && window.performKeyEquivalent(with: command("\(index + 1)")),
+        "Cmd+\(index + 1) stopped handling keys")
+      try require(mute.state == .off && solo.state == .off, "Cmd+\(index + 1) did not return \(name) to default")
+    }
+    for name in stemNames {  // the other stems stayed untouched by each other's cycle
+      let mute = try control(named: "\(name) Mute", in: window)
+      try require(mute.state == .off, "\(name) left muted")
+    }
+    checks.append(["name": "cmd_1_to_4_cycle_stems"])
+    // Switching to another app hides the panel; the toggle keeps it up.
+    Visibility.reset()
+    defer { Visibility.reset() }
+    controller.appResigned()
+    try require(!window.isVisible, "Switching apps did not hide the panel")
+    controller.appActivated()
+    pump()
+    try require(window.isVisible, "Switching back did not show the panel")
+    let hideToggle = controller.dockMenu().items[2]
+    _ = NSApp.sendAction(hideToggle.action!, to: hideToggle.target, from: hideToggle)
+    try require(!Visibility.hideWhenInactive, "Toggle did not turn off hiding")
+    controller.appResigned()
+    try require(window.isVisible, "Panel hid although the toggle is off")
+    Visibility.reset()
+    checks.append(["name": "hide_when_switching_apps"])
     // Dock and menu bar toggles: at least one must stay on.
     Visibility.reset()
     defer { Visibility.reset() }
     let toggles = controller.dockMenu().items
-    try require(toggles.map(\.title) == ["Show in Dock", "Show in Menu Bar"], "Visibility menu items changed")
-    try require(toggles.allSatisfy { controller.validateMenuItem($0) && $0.state == .on }, "Both start on and enabled")
+    try require(toggles.map(\.title) == ["Show in Dock", "Show in Menu Bar", "Hide When Switching Apps"], "Visibility menu items changed")
+    try require(toggles.allSatisfy { controller.validateMenuItem($0) && $0.state == .on }, "All toggles start on and enabled")
     _ = NSApp.sendAction(toggles[0].action!, to: toggles[0].target, from: toggles[0])
     try require(!Visibility.dock && Visibility.menuBar, "Dock toggle did not hide the Dock icon")
     try require(!controller.validateMenuItem(toggles[1]), "Menu bar toggle stayed enabled with the Dock off")
@@ -251,7 +311,12 @@ enum MenuE2E {
     guard let window = controller.e2eWindow, let view = window.contentView else {
       throw StemError("Snapshot has no panel")
     }
-    for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+    let vocalsMute = try control(named: "Vocals Mute", in: window), bassSolo = try control(named: "Bass Solo", in: window)
+    for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua), ("states", .darkAqua)] {
+      if name == "states" {  // Vocals muted, Bass soloed: the others fade
+        vocalsMute.performClick(nil)
+        bassSolo.performClick(nil)
+      }
       window.appearance = NSAppearance(named: look)
       view.layoutSubtreeIfNeeded()
       let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
@@ -269,7 +334,7 @@ enum MenuE2E {
       try NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
         .write(to: out.appendingPathComponent("panel-\(name).png"))
     }
-    print("PASS snapshot · panel-light.png, panel-dark.png")
+    print("PASS snapshot · panel-light.png, panel-dark.png, panel-states.png")
   }
 
   /// 3000 random clicks on every panel control. After each one the buttons must

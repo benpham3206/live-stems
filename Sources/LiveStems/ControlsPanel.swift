@@ -25,6 +25,15 @@ final class ChannelStrip: Backdrop {
   let fader = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
   let mute = LogicToggle(letter: "M", lit: ControlsPanel.muteColor)
   let solo = LogicToggle(letter: "S", lit: ControlsPanel.soloColor)
+  /// A silent strip (muted, or not soloed while another is) fades; a soloed one glows in its color.
+  private var silent = false, soloed = false
+  func show(silent: Bool, soloed: Bool) {
+    self.silent = silent
+    self.soloed = soloed
+    waveform.dimmed = silent
+    for view in [fader, meter] as [NSView] { view.alphaValue = silent ? 0.35 : 1 }
+    needsDisplay = true
+  }
   init(name: String, color: NSColor, icon: NSImage) {
     self.name = name
     self.color = color
@@ -57,6 +66,15 @@ final class ChannelStrip: Backdrop {
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
+    if soloed {
+      let ring = NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 10, yRadius: 10)
+      color.withAlphaComponent(0.14).setFill()
+      ring.fill()
+      color.setStroke()
+      ring.lineWidth = 2
+      ring.stroke()
+    }
+    NSGraphicsContext.current?.cgContext.setAlpha(silent ? 0.35 : 1)
     let plate = NSRect(x: 4, y: 286, width: 72, height: 26)
     let shape = NSBezierPath(roundedRect: plate, xRadius: 7, yRadius: 7)
     NSGradient(starting: color.blended(withFraction: 0.12, of: .white)!,

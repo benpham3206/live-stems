@@ -1,10 +1,11 @@
 import AppKit
 import OSLog
 
-/// The app has no menu bar to carry Cmd+W (close) and Cmd+Q (quit), so the
-/// panel handles them itself.
+/// The app has no menu bar to carry Cmd+W (close), Cmd+Q (quit) and Cmd+1-4
+/// (cycle a stem), so the panel handles them itself.
 final class PanelWindow: NSWindow {
   var quit: () -> Void = {}
+  var cycleStem: (Int) -> Void = { _ in }
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     guard event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {
       return super.performKeyEquivalent(with: event)
@@ -12,6 +13,7 @@ final class PanelWindow: NSWindow {
     switch event.charactersIgnoringModifiers {
     case "w": performClose(nil)
     case "q": quit()
+    case "1", "2", "3", "4": cycleStem(Int(event.charactersIgnoringModifiers!)! - 1)
     default: return super.performKeyEquivalent(with: event)
     }
     return true
@@ -26,6 +28,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private(set) var canTerminate = false
   private let activatesOnStatusClick: Bool
   private let terminate: () -> Void
+  private let setPolicy: (NSApplication.ActivationPolicy) -> Void
   private let window = PanelWindow(
     contentRect: NSRect(origin: .zero, size: ControlsPanel.size),
     styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered,
@@ -41,7 +44,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private let startOverride: (() -> Void)?
   /// `start` replaces the session start; the menu E2E counts starts without capturing audio.
   init(activateOnStatusClick: Bool, terminate: @escaping () -> Void = { NSApp.terminate(nil) },
-    start: (() -> Void)? = nil) {
+    start: (() -> Void)? = nil,
+    setPolicy: @escaping (NSApplication.ActivationPolicy) -> Void = { NSApp.setActivationPolicy($0) }) {
+    self.setPolicy = setPolicy
     self.activatesOnStatusClick = activateOnStatusClick
     self.terminate = terminate
     self.startOverride = start
@@ -52,6 +57,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
     window.delegate = self
     window.quit = { [weak self] in self?.quitApp() }
+    window.cycleStem = { [weak self] in self?.cycleStem($0) }
     window.level = .floating
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
@@ -111,6 +117,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   }
   var e2eStatusButton: NSStatusBarButton? { item.button }
   var e2eWindow: NSWindow? { window }
+  var e2eControls: StemControls { controls }
   func e2eApplyStatusForTest(enabled: Bool) {
     applyStatus(text: "E2E", output: "E2E", enabled: enabled, stems: true)
   }
@@ -212,6 +219,23 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     }
     applyControls()
   }
+  /// Cmd+1-4: default, then muted, then soloed, then default again.
+  private func cycleStem(_ index: Int) {
+    let strip = panel.strips[index], mask: UInt32 = 1 << UInt32(index)
+    if strip.mute.state == .on {
+      strip.mute.state = .off
+      strip.solo.state = .on
+      controls.mute &= ~mask
+      controls.solo |= mask
+    } else if strip.solo.state == .on {
+      strip.solo.state = .off
+      controls.solo &= ~mask
+    } else {
+      strip.mute.state = .on
+      controls.mute |= mask
+    }
+    applyControls()
+  }
   @objc private func muteAll(_ sender: NSButton) {
     controls.mute = sender.state == .on ? 0b1111 : 0
     for strip in panel.strips { strip.mute.state = sender.state }
@@ -225,7 +249,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private func applyControls() {
     panel.muteAllButton.state = controls.mute == 0b1111 ? .on : .off
     panel.clearSoloButton.state = controls.solo != 0 ? .on : .off
-    for (strip, gain) in zip(panel.strips, controls.effectiveGains) { strip.waveform.dimmed = gain == 0 }
+    for (index, (strip, gain)) in zip(panel.strips, controls.effectiveGains).enumerated() {
+      strip.show(silent: gain == 0, soloed: controls.solo & (1 << UInt32(index)) != 0)
+    }
     session.setControls(controls)
     // No enable step: the first mix that needs stems starts Live Stems.
     if !active, Set(controls.effectiveGains).count > 1 { (startOverride ?? session.start)() }
@@ -252,14 +278,15 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   /// Applies the saved choice. E2E controllers skip the policy so tests never change the app.
   func applyVisibility() {
     item.isVisible = Visibility.menuBar
+    setPolicy(Visibility.dock ? .regular : .accessory)
     guard activatesOnStatusClick else { return }
-    NSApp.setActivationPolicy(Visibility.dock ? .regular : .accessory)
     NSApp.mainMenu = appMenu()
   }
   /// Menu for the status item and the Dock icon.
   func dockMenu() -> NSMenu {
     let menu = NSMenu()
-    for (title, action) in [("Show in Dock", #selector(toggleDock)), ("Show in Menu Bar", #selector(toggleMenuBar))] {
+    for (title, action) in [("Show in Dock", #selector(toggleDock)), ("Show in Menu Bar", #selector(toggleMenuBar)),
+      ("Hide When Switching Apps", #selector(toggleHideWhenInactive))] {
       let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
       entry.target = self
       menu.addItem(entry)
@@ -285,8 +312,12 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     Visibility.setMenuBar(!Visibility.menuBar)
     applyVisibility()
   }
+  @objc private func toggleHideWhenInactive() { Visibility.hideWhenInactive.toggle() }
   func validateMenuItem(_ entry: NSMenuItem) -> Bool {
     switch entry.action {
+    case #selector(toggleHideWhenInactive):
+      entry.state = Visibility.hideWhenInactive ? .on : .off
+      return true
     case #selector(toggleDock):
       entry.state = Visibility.dock ? .on : .off
       return !Visibility.dock || Visibility.menuBar
@@ -301,6 +332,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     panelRequested = false
     window.orderOut(nil)
     NSStatusBar.system.removeStatusItem(item)
+    // The relay can wait for the next pause while music plays; the app must look gone meanwhile.
+    setPolicy(.accessory)
     resetControls()  // a reopen starts from Original with the model asleep
     session.quit { [weak self] in
       self?.canTerminate = true
@@ -315,9 +348,20 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       canTerminate = false
       item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
       configureStatusItem()
+      applyVisibility()
       session.cancelQuit()
     }
     showPanel()
+  }
+  /// Cmd+Tab only activates the app; a closed panel must come back with it.
+  func appActivated() {
+    guard !relaying else { return }
+    if window.isVisible { window.makeKeyAndOrderFront(nil) } else { showPanel() }
+  }
+  /// Another app came forward: tuck the panel away, as a menu bar popover would.
+  func appResigned() {
+    guard Visibility.hideWhenInactive, !relaying, window.isVisible else { return }
+    window.orderOut(nil)
   }
   func enable() { session.start() }
   func shutdown() { session.shutdownSync() }
