@@ -102,6 +102,12 @@ final class FaderCell: NSSliderCell {
   private static let marks: [(String, Double)] = [("0", 0), ("-3", -3), ("-6", -6), ("-10", -10), ("-20", -20), ("-∞", -.infinity)]
   override var knobThickness: CGFloat { 26 }
   private var grooveX: CGFloat { (controlView?.bounds.maxX ?? 0) - 12 }
+  // The cap and its shadow are larger than the knob rect AppKit repaints while
+  // dragging, which left ghost caps behind. Repaint the whole fader instead.
+  override func continueTracking(last lastPoint: NSPoint, current currentPoint: NSPoint, in controlView: NSView) -> Bool {
+    defer { controlView.setNeedsDisplay(controlView.bounds) }
+    return super.continueTracking(last: lastPoint, current: currentPoint, in: controlView)
+  }
   override func drawBar(inside rect: NSRect, flipped: Bool) {
     let track = trackRect
     let groove = NSRect(x: grooveX - 2.5, y: track.minY + 4, width: 5, height: track.height - 8)

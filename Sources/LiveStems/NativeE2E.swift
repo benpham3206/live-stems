@@ -148,6 +148,8 @@ enum NativeE2E {
       try MenuE2E.spam(out)
     case "snapshot":
       try MenuE2E.snapshot(out)
+    case "fader-redraw":
+      try FaderRedrawE2E.run()
     case "transitions":
       var runs = [[String: Any]]()
       for seed in UInt64(1)...25 { runs.append(try StreamMixerChecks.transitions(seed: seed)) }
