@@ -70,8 +70,9 @@ music.
 
 ## What you need
 
-- A Mac with **Apple Silicon** running **macOS 14.2 or newer**. Built and tested on an **M3 Max**. The model
-  must finish each job in under 0.1 s; on slower chips, stems may drop out to the plain song more often.
+- A Mac with **Apple Silicon** running **macOS 14.2 or newer**. Tested on an **M3 Max** and a
+  base **M1**. The model must finish each job in under 0.1 s. At launch Live Stems times itself and, on
+  slower GPUs (M1, M2), switches to a lighter model that is a little less clean.
 - **Python 3.12**: the installer finds it, or installs it with Homebrew.
 - Apple's **Command Line Tools**, to build the app (`xcode-select --install` if you don't have them).
 - About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB),
@@ -120,10 +121,12 @@ Every command below runs from `~/LiveStems`.
 python3.12 -m venv work/stems-venv
 work/stems-venv/bin/pip install "demucs-mlx[convert]==1.5.3"
 work/stems-venv/bin/python -m demucs_mlx.mlx_convert htdemucs_ft --output-dir work/model-cache
+work/stems-venv/bin/python -m demucs_mlx.mlx_convert htdemucs --output-dir work/model-cache
 ```
 
-The last command downloads Meta's `htdemucs_ft` model (four fine-tuned models, one per stem) and
-converts it for your GPU.
+The last two commands download Meta's models and convert them for your GPU: `htdemucs_ft` (four
+fine-tuned models, one per stem; Live Stems runs three of them) and the lighter `htdemucs` (one
+model for all stems), which Live Stems uses on slower Macs.
 
 #### 3. Make a signing certificate (one time)
 
