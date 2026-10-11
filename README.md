@@ -70,7 +70,7 @@ music.
 
 ## What you need
 
-- A Mac with **Apple Silicon** running **macOS 26 or newer**. Built and tested on an **M3 Max**. The model
+- A Mac with **Apple Silicon** running **macOS 14.2 or newer**. Built and tested on an **M3 Max**. The model
   must finish each job in under 0.1 s; on slower chips, stems may drop out to the plain song more often.
 - **Python 3.12**: the installer finds it, or installs it with Homebrew.
 - Apple's **Command Line Tools**, to build the app (`xcode-select --install` if you don't have them).
@@ -89,7 +89,7 @@ It takes a few minutes, mostly downloads, and it is safe to run again: finished 
 and running it later updates Live Stems. Add `-s -- --dry-run` after `zsh` to see the steps without
 running them. Here is what it does:
 
-1. **Checks your Mac:** Apple Silicon, macOS 26 or newer, Apple's Command Line Tools.
+1. **Checks your Mac:** Apple Silicon, macOS 14.2 or newer, Apple's Command Line Tools.
 2. **Finds Python 3.12**, or installs it with Homebrew if you have Homebrew.
 3. **Downloads the source** to `~/LiveStems`.
 4. **Sets up the separation library and the model** in `~/LiveStems/work` (about 1.5 GB, once).
