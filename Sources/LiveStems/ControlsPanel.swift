@@ -107,7 +107,7 @@ final class ControlsPanel: NSView {
   init() {
     let colors: [NSColor] = [.systemPink, .systemOrange, .systemPurple, .systemGreen]
     // SF Symbols has no drum; a transient waveform stands in. The stand mic is new in SF Symbols 8.
-    let symbols = [["microphone.dynamic.on.stand", "microphone.fill"], ["waveform.path"],
+    let symbols = [["microphone.dynamic.on.stand", "microphone.fill", "mic.fill"], ["waveform.path"],
       ["guitars.fill"], ["sparkles"]]
     strips = ["Vocals", "Drums", "Bass", "Other"].enumerated().map { index, name in
       ChannelStrip(name: name, color: colors[index], icon: symbol(symbols[index]))
