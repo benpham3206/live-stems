@@ -81,7 +81,7 @@ if ! security find-certificate -c "$CERT" >/dev/null 2>&1; then
       -out "$tmp/id.p12" -passout "pass:$pass"
     # -T: codesign may use the key without asking on every build.
     security import "$tmp/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P "$pass" -T /usr/bin/codesign >/dev/null
-    /usr/bin/trash "$tmp"   # the key now lives only in the keychain
+    rm -r "$tmp"   # the key now lives only in the keychain (not Trash; /usr/bin/trash is macOS 15+)
   fi
 fi
 if (( ! DRY )); then

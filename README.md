@@ -97,8 +97,10 @@ running them. Here is what it does:
 5. **Creates a signing certificate**, "Live Stems Local", in your login keychain. macOS remembers the
    audio permission only for an app with a stable signature, so this saves you from re-approving it
    after every update.
-6. **Builds the app**, puts it in `/Applications`, and opens it. When macOS asks whether `codesign`
-   may use your certificate, enter your Mac password and click **Always Allow**.
+6. **Builds the app**, puts it in `/Applications`, and opens it. During the build, macOS asks once:
+   *"codesign wants to sign using key "Live Stems Local" in your keychain."* Type your Mac login
+   password and click **Always Allow**. (**Allow** works too, but asks again on every update.) The
+   install waits for your answer, so if it seems stuck, look for this dialog behind Terminal.
 
 <details>
 <summary><b>Install by hand instead</b></summary>
@@ -152,7 +154,8 @@ bash outputs/live-stems-source/script/build_and_run.sh
 ```
 
 This builds the app, signs it, puts it in `/Applications/Live Stems.app` and opens it. When macOS asks
-whether `codesign` may use your certificate, enter your Mac password and click **Always Allow**.
+whether `codesign` may use your key, type your Mac login password and click **Always Allow** (see
+[step 6 above](#install)).
 Run the same command again to update after `git pull`. The previous version is kept in `work/`.
 
 </details>
