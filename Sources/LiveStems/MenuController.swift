@@ -64,9 +64,25 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     window.isMovableByWindowBackground = true
     window.isOpaque = false
     window.backgroundColor = .clear
-    let glass = NSGlassEffectView(frame: NSRect(origin: .zero, size: ControlsPanel.size))
-    glass.contentView = panel
-    window.contentView = glass
+    let frame = NSRect(origin: .zero, size: ControlsPanel.size)
+    if #available(macOS 26.0, *) {
+      let glass = NSGlassEffectView(frame: frame)
+      glass.contentView = panel
+      window.contentView = glass
+    } else {
+      // Before Liquid Glass: the same panel on HUD vibrancy.
+      let blur = NSVisualEffectView(frame: frame)
+      blur.material = .hudWindow
+      blur.blendingMode = .behindWindow
+      blur.state = .active
+      blur.wantsLayer = true
+      blur.layer?.cornerRadius = 16
+      blur.layer?.masksToBounds = true
+      panel.frame = frame
+      panel.autoresizingMask = [.width, .height]
+      blur.addSubview(panel)
+      window.contentView = blur
+    }
     // Any open app can be the source; the list refreshes each time it opens.
     sourcePicker.menu?.delegate = self
     sourcePicker.target = self

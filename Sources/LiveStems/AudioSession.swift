@@ -36,6 +36,7 @@ final class AudioSession {
   private var inputFormat: AVAudioFormat!,
     modelFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
   private var started = false
+  private var processListener: AudioObjectPropertyListenerBlock?
   private var captureBoundary = 0.0
   private(set) var lastDrainEndHostSeconds = 0.0
   private(set) var outputBufferFrames: UInt32 = 0
@@ -48,11 +49,17 @@ final class AudioSession {
       description.isMixdown = true
       description.isMono = false
       description.isExclusive = false
-      description.bundleIDs = Self.tapBundleIDs(for: source.bundleID)
-      description.isProcessRestoreEnabled = true
+      if #available(macOS 26.0, *) {
+        description.bundleIDs = Self.tapBundleIDs(for: source.bundleID)
+        description.isProcessRestoreEnabled = true
+      } else {
+        // Pre-26 has no bundle-ID tap: include the matching processes by object ID.
+        description.processes = Self.tapProcesses(for: source.bundleID)
+      }
       description.muteBehavior = .unmuted
       try audioCheck(
         AudioHardwareCreateProcessTap(description, &tapID), "Cannot capture \(source.name)")
+      if #unavailable(macOS 26.0) { watchProcesses(bundleID: source.bundleID) }
       let format = try tapFormat()
       guard format.mFormatID == kAudioFormatLinearPCM,
         format.mFormatFlags & kAudioFormatFlagIsFloat != 0, format.mBitsPerChannel == 32,
@@ -112,23 +119,39 @@ final class AudioSession {
   static func tapBundleIDs(for bundleID: String) -> [String] {
     var ids = [bundleID, bundleID + ".helper"]
     if bundleID == "com.apple.Safari" { ids.append("com.apple.WebKit.GPU") }
+    let prefix = bundleID.lowercased() + "."
+    for (_, id) in audioProcesses() {
+      if id.lowercased().hasPrefix(prefix), !ids.contains(id) { ids.append(id) }
+    }
+    return ids
+  }
+  /// Same matching as `tapBundleIDs`, by process object for the pre-26 include list.
+  static func tapProcesses(for bundleID: String) -> [AudioObjectID] {
+    let exact = bundleID.lowercased(), prefix = exact + "."
+    let webKit = bundleID == "com.apple.Safari"
+    return audioProcesses().compactMap { process, bid in
+      let lower = bid.lowercased()
+      let match = lower == exact || lower.hasPrefix(prefix)
+        || (webKit && lower == "com.apple.webkit.gpu")
+      return match ? process : nil
+    }
+  }
+  /// Every audio process object with its bundle ID. Objects without one are skipped.
+  private static func audioProcesses() -> [(AudioObjectID, String)] {
     var address = audioAddress(kAudioHardwarePropertyProcessObjectList)
     var size: UInt32 = 0
     AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size)
     var processes = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
     AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &processes)
-    let prefix = bundleID.lowercased() + "."
-    for process in processes {
+    return processes.compactMap { process in
       var name = audioAddress(kAudioProcessPropertyBundleID)
       var value: CFString = "" as CFString
       var length = UInt32(MemoryLayout<CFString>.size)
       guard withUnsafeMutablePointer(to: &value, {
         AudioObjectGetPropertyData(process, &name, 0, nil, &length, $0)
-      }) == noErr else { continue }
-      let id = value as String
-      if id.lowercased().hasPrefix(prefix), !ids.contains(id) { ids.append(id) }
+      }) == noErr else { return nil }
+      return (process, value as String)
     }
-    return ids
   }
   // Audio already handed to the device survives a flush. A small
   // per-process IO buffer bounds that old-audio leak after a skip.
@@ -172,6 +195,28 @@ final class AudioSession {
         AudioObjectSetPropertyData(
           tapID, &a, 0, nil, UInt32(MemoryLayout<CATapDescription>.size), $0),
         "Cannot switch the source app's playback")
+    }
+  }
+  /// Pre-26 taps hold a fixed process list. Re-match when processes start or quit,
+  /// so a relaunched app or new helper joins the tap.
+  private func watchProcesses(bundleID: String) {
+    let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+      guard let self, self.tapID != 0 else { return }
+      let processes = Self.tapProcesses(for: bundleID)
+      guard processes != self.description.processes else { return }
+      self.description.processes = processes
+      var a = audioAddress(kAudioTapPropertyDescription)
+      var d = self.description
+      _ = withUnsafePointer(to: &d) {
+        AudioObjectSetPropertyData(
+          self.tapID, &a, 0, nil, UInt32(MemoryLayout<CATapDescription>.size), $0)
+      }
+    }
+    var a = audioAddress(kAudioHardwarePropertyProcessObjectList)
+    if AudioObjectAddPropertyListenerBlock(
+      AudioObjectID(kAudioObjectSystemObject), &a, DispatchQueue.main, block) == noErr
+    {
+      processListener = block
     }
   }
   func setOutputEnabled(_ value: Bool) {
@@ -229,6 +274,12 @@ final class AudioSession {
     return result
   }
   func stop() {
+    if let block = processListener {
+      var a = audioAddress(kAudioHardwarePropertyProcessObjectList)
+      AudioObjectRemovePropertyListenerBlock(
+        AudioObjectID(kAudioObjectSystemObject), &a, DispatchQueue.main, block)
+      processListener = nil
+    }
     if let core = core { ls_enable(core, 0) }
     if tapID != 0 { try? setOriginalSuppressed(false) }
     if aggregate != 0, let proc = ioProc {

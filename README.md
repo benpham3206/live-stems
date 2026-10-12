@@ -70,8 +70,9 @@ music.
 
 ## What you need
 
-- A Mac with **Apple Silicon** running **macOS 26 or newer**. Built and tested on an **M3 Max**. The model
-  must finish each job in under 0.1 s; on slower chips, stems may drop out to the plain song more often.
+- A Mac with **Apple Silicon** running **macOS 14.2 or newer**. Tested on an **M3 Max** and a
+  base **M1**. The model must finish each job in under 0.1 s. At launch Live Stems times itself and, on
+  slower GPUs (M1, M2), switches to a lighter model that is a little less clean.
 - **Python 3.12**: the installer finds it, or installs it with Homebrew.
 - Apple's **Command Line Tools**, to build the app (`xcode-select --install` if you don't have them).
 - About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB),
@@ -89,15 +90,17 @@ It takes a few minutes, mostly downloads, and it is safe to run again: finished 
 and running it later updates Live Stems. Add `-s -- --dry-run` after `zsh` to see the steps without
 running them. Here is what it does:
 
-1. **Checks your Mac:** Apple Silicon, macOS 26 or newer, Apple's Command Line Tools.
+1. **Checks your Mac:** Apple Silicon, macOS 14.2 or newer, Apple's Command Line Tools.
 2. **Finds Python 3.12**, or installs it with Homebrew if you have Homebrew.
 3. **Downloads the source** to `~/LiveStems`.
 4. **Sets up the separation library and the model** in `~/LiveStems/work` (about 1.5 GB, once).
 5. **Creates a signing certificate**, "Live Stems Local", in your login keychain. macOS remembers the
    audio permission only for an app with a stable signature, so this saves you from re-approving it
    after every update.
-6. **Builds the app**, puts it in `/Applications`, and opens it. When macOS asks whether `codesign`
-   may use your certificate, enter your Mac password and click **Always Allow**.
+6. **Builds the app**, puts it in `/Applications`, and opens it. During the build, macOS asks once:
+   *"codesign wants to sign using key "Live Stems Local" in your keychain."* Type your Mac login
+   password and click **Always Allow**. (**Allow** works too, but asks again on every update.) The
+   install waits for your answer, so if it seems stuck, look for this dialog behind Terminal.
 
 <details>
 <summary><b>Install by hand instead</b></summary>
@@ -120,10 +123,12 @@ Every command below runs from `~/LiveStems`.
 python3.12 -m venv work/stems-venv
 work/stems-venv/bin/pip install "demucs-mlx[convert]==1.5.3"
 work/stems-venv/bin/python -m demucs_mlx.mlx_convert htdemucs_ft --output-dir work/model-cache
+work/stems-venv/bin/python -m demucs_mlx.mlx_convert htdemucs --output-dir work/model-cache
 ```
 
-The last command downloads Meta's `htdemucs_ft` model (four fine-tuned models, one per stem) and
-converts it for your GPU.
+The last two commands download Meta's models and convert them for your GPU: `htdemucs_ft` (four
+fine-tuned models, one per stem; Live Stems runs three of them) and the lighter `htdemucs` (one
+model for all stems), which Live Stems uses on slower Macs.
 
 #### 3. Make a signing certificate (one time)
 
@@ -149,7 +154,8 @@ bash outputs/live-stems-source/script/build_and_run.sh
 ```
 
 This builds the app, signs it, puts it in `/Applications/Live Stems.app` and opens it. When macOS asks
-whether `codesign` may use your certificate, enter your Mac password and click **Always Allow**.
+whether `codesign` may use your key, type your Mac login password and click **Always Allow** (see
+[step 6 above](#install)).
 Run the same command again to update after `git pull`. The previous version is kept in `work/`.
 
 </details>

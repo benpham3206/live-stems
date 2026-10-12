@@ -25,7 +25,8 @@ run()  { if (( DRY )); then print "    would run: $*"; else "$@"; fi }
 
 # 1. This Mac
 [[ $(uname -m) == arm64 ]] || fail "Live Stems needs an Apple Silicon Mac."
-(( ${$(sw_vers -productVersion)%%.*} >= 26 )) || fail "Live Stems needs macOS 26 or newer."
+autoload -Uz is-at-least
+is-at-least 14.2 "$(sw_vers -productVersion)" || fail "Live Stems needs macOS 14.2 or newer."
 xcode-select -p >/dev/null 2>&1 || fail "Install Apple's Command Line Tools first: xcode-select --install"
 
 # 2. Python 3.12: from PATH, from uv, or installed with Homebrew
@@ -60,6 +61,11 @@ if [[ ! -f $MODEL/htdemucs_ft.safetensors ]]; then
   say "Downloading and converting the model (a few minutes)"
   run "$VENV/bin/python" -m demucs_mlx.mlx_convert htdemucs_ft --output-dir "$MODEL"
 fi
+# The lighter one-network model, used when this Mac's GPU is too slow for htdemucs_ft (M1, M2)
+if [[ ! -f $MODEL/htdemucs.safetensors ]]; then
+  say "Downloading the lighter model for slower Macs"
+  run "$VENV/bin/python" -m demucs_mlx.mlx_convert htdemucs --output-dir "$MODEL"
+fi
 
 # 5. A signing certificate, so macOS remembers the audio permission across updates
 if ! security find-certificate -c "$CERT" >/dev/null 2>&1; then
@@ -75,7 +81,7 @@ if ! security find-certificate -c "$CERT" >/dev/null 2>&1; then
       -out "$tmp/id.p12" -passout "pass:$pass"
     # -T: codesign may use the key without asking on every build.
     security import "$tmp/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P "$pass" -T /usr/bin/codesign >/dev/null
-    /usr/bin/trash "$tmp"   # the key now lives only in the keychain
+    rm -r "$tmp"   # the key now lives only in the keychain (not Trash; /usr/bin/trash is macOS 15+)
   fi
 fi
 if (( ! DRY )); then
