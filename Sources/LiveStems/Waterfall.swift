@@ -63,9 +63,9 @@ struct Camera: Equatable {
   }
 }
 
-/// The 3D waterfall on the GPU, drawn straight into its view: every row a hairline over a
-/// faint veil, in perspective from any angle, far rows first so near ones veil them, in fog,
-/// and a bloom of their light. The rows live in a ring on the GPU; a new row is one copy.
+/// The 3D waterfall on the GPU, drawn straight into its view: every other row a glowing
+/// hairline over a faint veil, in perspective from any angle, far rows first so near ones veil
+/// them, and a bloom of their light. The rows live in a ring on the GPU; a new row is one copy.
 final class Waterfall {
   /// A grid line from a to b, (frequency, time, height, 1), and its premultiplied colour.
   struct Segment {
@@ -77,7 +77,7 @@ final class Waterfall {
     var pixels: SIMD2<Float>
     var scale: Float
     var bands, capacity, newest, shown, linear: UInt32
-    var near, far, ground: Float
+    var ground: Float
   }
   /// Ten seconds of rows and one spare, so the row being replaced is never one being drawn.
   // ceiling: 10 s at 30 rows/s; a longer span needs a bigger ring (1.6 kB a row).
@@ -88,7 +88,7 @@ final class Waterfall {
   private let ring: MTLBuffer, order: MTLBuffer
   private var hueBuffer: MTLBuffer?, gridBuffer: MTLBuffer?, gridCount = 0
   private var scene: MTLTexture?, glow: MTLTexture?, blur: MPSImageGaussianBlur?
-  private var newest = 0, count = 0
+  private var newest = 0, count = 0, pushed = 0
   var camera = Camera.reference, seconds = 5, linear = false
 
   init() throws {
@@ -124,6 +124,7 @@ final class Waterfall {
     guard levels.count == SpectrumAnalyzer.bands else { return }
     newest = count == 0 ? 0 : (newest + 1) % Self.capacity
     count = min(Self.capacity - 1, count + 1)
+    pushed += 1
     levels.withUnsafeBytes { ring.contents().advanced(by: newest * levels.count * 4).copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
   }
   func clear() { count = 0 }
@@ -176,18 +177,17 @@ final class Waterfall {
     }
     guard let scene, let glow, let blur, let hueBuffer else { return }
     let shown = min(count, seconds * SpectrumView.rowsPerSecond)
-    // Far rows first: by how far each row's plane lies from the eye along time.
+    // Every other row, as the reference's ridges are spaced, chosen by its place in the whole
+    // stream so a row keeps being drawn as it recedes. Far rows first: by how far each row's
+    // plane lies from the eye along time.
     let eye = camera.eye, span = Float(max(1, shown - 1))
-    let rows = (0..<shown).map { age in ((newest - age + Self.capacity) % Self.capacity, abs(Float(age) / span - eye.y)) }
+    let rows = (0..<shown).filter { (pushed - 1 - $0) % 2 == 0 }
+      .map { age in ((newest - age + Self.capacity) % Self.capacity, abs(Float(age) / span - eye.y)) }
       .sorted { $0.1 > $1.1 }.map { UInt32($0.0) }
     rows.withUnsafeBytes { if $0.count > 0 { order.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
-    // The fog runs from the nearest corner of the box to the farthest.
-    let corners = (0..<8).map { i in SIMD3<Float>(Float(i & 1), Float(i >> 1 & 1), Float(i >> 2 & 1)) }
-    let world = { (p: SIMD3<Float>) in (p - eye) * SIMD3(Camera.box.x, Camera.box.z, Camera.box.y) }
-    let depths = corners.map { simd_length(world($0)) }
     var frame = Frame(clip: camera.clip(width: Float(width), height: Float(height), scale: scale), pixels: [Float(width), Float(height)], scale: scale,
       bands: UInt32(SpectrumAnalyzer.bands), capacity: UInt32(Self.capacity), newest: UInt32(newest), shown: UInt32(shown),
-      linear: linear ? 1 : 0, near: depths.min()!, far: depths.max()!, ground: eye.z < 0 ? 0.06 : 0.25)
+      linear: linear ? 1 : 0, ground: eye.z < 0 ? 0.06 : 0.25)
     let pass = MTLRenderPassDescriptor()
     pass.colorAttachments[0].texture = scene
     pass.colorAttachments[0].loadAction = .clear
@@ -207,12 +207,12 @@ final class Waterfall {
       }
     }
     if eye.z >= 0 { ground() }
-    if shown > 0 {
+    if !rows.isEmpty {
       encoder.setRenderPipelineState(rowState)
       encoder.setVertexBuffer(ring, offset: 0, index: 1)
       encoder.setVertexBuffer(hueBuffer, offset: 0, index: 2)
       encoder.setVertexBuffer(order, offset: 0, index: 3)
-      encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: (SpectrumAnalyzer.bands - 1) * 12, instanceCount: shown)
+      encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: (SpectrumAnalyzer.bands - 1) * 12, instanceCount: rows.count)
     }
     if eye.z < 0 { ground() }
     encoder.endEncoding()
@@ -229,7 +229,7 @@ final class Waterfall {
   private static let shader = """
     #include <metal_stdlib>
     using namespace metal;
-    struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, shown, linear; float near, far, ground; };
+    struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, shown, linear; float ground; };
     struct Lit { float4 position [[position]]; float4 color; float across; float width; float fade; };
     constant uint sheetEnds[6] = {0, 0, 1, 1, 0, 1};
     constant float sheetTops[6] = {1, 0, 1, 1, 0, 0};
@@ -237,10 +237,10 @@ final class Waterfall {
     constant float sides[6] = {-1, -1, 1, -1, 1, 1};
 
     static float height(float db, uint linear) { return linear ? min(1.0, pow(10.0, db / 20)) : clamp((db + 120) / 120, 0.0, 1.0); }
-    // How far v stands above the lowest within 10 bands: peaks stand out, the body does not, however loud.
+    // How far v stands above the lowest within 0.4 octave: peaks stand out, the body does not, however loud.
     static float prominence(const device float *row, uint bands, uint i, float v, uint linear) {
       float low = v;
-      for (int k = max(int(i) - 10, 0); k <= min(int(i) + 10, int(bands) - 1); k++) { low = min(low, height(row[k], linear)); }
+      for (int k = max(int(i) - 16, 0); k <= min(int(i) + 16, int(bands) - 1); k++) { low = min(low, height(row[k], linear)); }
       return v - low;
     }
     // Quiet is blue, rising through violet into the band's own hue where loud and standing
@@ -253,8 +253,6 @@ final class Waterfall {
     }
     // The newest rows fade in from clear over the first fifth of the box: a soft front edge.
     static float emerge(float t) { return 0.05 + 0.95 * smoothstep(0.0, 0.2, t); }
-    // Farther from the eye, dimmer.
-    static float fog(constant Frame &f, float depth) { return 1 - 0.6 * smoothstep(f.near, f.far, depth); }
     // A point pushed sideways from the line a to b by this many pixels, in clip space.
     static float4 widen(constant Frame &f, float4 a, float4 b, bool end, float pixels) {
       float2 pa = a.xy / a.w * f.pixels / 2, pb = b.xy / b.w * f.pixels / 2;
@@ -278,19 +276,21 @@ final class Waterfall {
       out.color = float4(shade(v, prominence(levels, f.bands, at, v, f.linear), hues[at].rgb, t), v);
       if (line) {
         float4 a = f.clip * float4(xa, t, va, 1), b = f.clip * float4(xb, t, vb, 1);
-        // A hairline half a point wide, and a pixel of soft edge each side.
-        out.width = 0.25 * f.scale;
-        out.across = sides[corner] * (out.width + 1);
+        // Out to the edge of the halo, wider where loud; the glow's strength rides in alpha.
+        float loud = max(va, vb);
+        out.width = (2.5 + 7 * smoothstep(0.45, 1.0, loud)) * f.scale;
+        out.color.a = smoothstep(0.3, 1.0, loud);
+        out.across = sides[corner] * out.width;
         out.position = widen(f, a, b, lineEnds[corner], out.across);
       } else {
         out.position = f.clip * float4(float(at) / (f.bands - 1), t, sheetTops[corner] * v, 1);
         out.across = sheetTops[corner];
         out.width = -1;
       }
-      out.fade = emerge(t) * fog(f, out.position.w);
+      out.fade = emerge(t);
       return out;
     }
-    fragment float4 rowLight(Lit in [[stage_in]]) {
+    fragment float4 rowLight(Lit in [[stage_in]], constant Frame &f [[buffer(0)]]) {
       float v = in.color.a;
       if (in.width < 0) {
         // A veil over the rows behind, lit just under its top where loud: the peaks glow from within.
@@ -298,9 +298,12 @@ final class Waterfall {
         float veil = 0.04 + 0.08 * smoothstep(0, 0.3, v) + 0.15 * light;
         return float4(in.color.rgb * 0.2 * light + float3(0.03, 0.07, 0.30) * veil, veil) * in.fade * in.fade;
       }
-      // The hairline adds its light; louder, brighter.
-      float cover = clamp(in.width + 0.5 - abs(in.across), 0.0, 1.0);
-      return float4(in.color.rgb * cover * (0.35 + 0.65 * smoothstep(0.3, 0.9, v)) * in.fade, 0);
+      // A hairline half a point wide, with a pixel of soft edge, that covers what is behind it,
+      // in a soft halo of added light, wider and brighter where loud. Distances in points.
+      float d = abs(in.across) / f.scale, r = in.width / f.scale;
+      float halo = (0.08 + 0.30 * v) * exp(-4 * d * d / (r * r)) * (1 - smoothstep(0.7 * r, r, d));
+      float core = 0.85 * clamp(0.25 * f.scale + 0.5 - abs(in.across), 0.0, 1.0);
+      return float4(in.color.rgb * (1.4 * core + halo * 0.7), core) * in.fade;
     }
 
     struct Segment { float4 a, b, color; };

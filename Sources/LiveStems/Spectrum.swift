@@ -193,7 +193,7 @@ final class SpectrumView: NSView {
   override func rightMouseDragged(with event: NSEvent) {
     guard threeD, let from = turning else { return }
     let to = event.locationInWindow
-    camera.turn(dx: Float(to.x - from.x) * 0.01, dy: Float(from.y - to.y) * 0.01)  // drag up to look from above
+    camera.turn(dx: Float(to.x - from.x) * 0.01, dy: Float(to.y - from.y) * 0.01)  // drag up to look from below
     turning = to
   }
   override func rightMouseUp(with event: NSEvent) { turning = nil }

@@ -222,7 +222,8 @@ enum SpectrumE2E {
     guard abs(view.camera.yaw - (start.yaw - 1)) < 1e-4, view.camera.pitch == start.pitch else {
       throw StemError("A right-drag across did not turn the view around: \(view.camera)")
     }
-    for (y, limit) in [(20000, Float(89)), (-20000, -89)] as [(CGFloat, Float)] {
+    // A drag right lowers the yaw (above); a drag up lowers the pitch, to look from below.
+    for (y, limit) in [(20000, Float(-89)), (-20000, 89)] as [(CGFloat, Float)] {
       view.rightMouseDragged(with: event(.rightMouseDragged, 400, y))
       guard abs(view.camera.pitch - limit * .pi / 180) < 1e-5 else { throw StemError("Pitch went past \(limit)°: \(view.camera)") }
     }
