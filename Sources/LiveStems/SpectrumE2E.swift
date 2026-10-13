@@ -286,6 +286,14 @@ enum SpectrumE2E {
         throw StemError("\"\(a.text)\" overlaps another label at yaw \(step * 10)°")
       }
     }
+    // Label text zooms with the plot, head on to the frequency axis too.
+    func titleSize(_ zoom: Float) -> CGFloat? {
+      view.camera = Camera(yaw: 0, pitch: 0.05, zoom: zoom)
+      return view.labels(in: view.bounds.size).first(where: { $0.text == "Frequency (Hz)" })?.size
+    }
+    guard let small = titleSize(1), let large = titleSize(1.5), abs(large / small - 1.5) < 0.01 else {
+      throw StemError("Label text did not zoom with the plot")
+    }
     view.camera = .reference
     view.scrollWheel(with: scroll(3))
     guard view.camera.zoom > 1.2, view.camera.yaw == start.yaw else { throw StemError("Scrolling up did not zoom in: \(view.camera)") }

@@ -264,6 +264,8 @@ final class SpectrumView: NSView {
   private static let axisText = NSColor(srgbRed: 0.88, green: 0.90, blue: 0.97, alpha: 0.88)
   /// Every label at this camera, in a view this size; none for a point behind the eye.
   func labels(in size: CGSize) -> [Label] {
+    // Text and its offsets grow and shrink with the zoom, within a readable range.
+    let z = CGFloat(min(1.6, max(0.6, camera.zoom)))
     func at(_ f: CGFloat, _ t: CGFloat, _ v: CGFloat) -> CGPoint? { camera.point(SIMD3(Float(f), Float(t), Float(v)), in: size) }
     guard let origin = at(0, 0, 0), let front = at(1, 0, 0), let top = at(0, 0, 1), let back = at(1, 1, 0) else { return [] }
     // An axis title lies level under its axis. A lying axis has it under the middle, out at right angles;
@@ -279,21 +281,21 @@ final class SpectrumView: NSView {
       let low = from.y < to.y ? from : to, mid = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2)
       let anchor = CGPoint(x: low.x + (mid.x - low.x) * flat, y: low.y + (mid.y - low.y) * flat)
       let way = CGVector(dx: out.dx * level, dy: out.dy * level - (1 - level)), length = max(1e-3, hypot(way.dx, way.dy))
-      return Label(text: text, at: anchor + CGVector(dx: way.dx / length * 58, dy: way.dy / length * 58), size: size)
+      return Label(text: text, at: anchor + CGVector(dx: way.dx / length * 58 * z, dy: way.dy / length * 58 * z), size: size)
     }
     let titles = [
-      Label(text: linearAmplitude ? "Amplitude" : "Amplitude (dB)", at: top + CGVector(dx: -63, dy: 53), size: 15, align: 0),
-      title("Frequency (Hz)", origin, front, size: 17),
-      title("Time (s)", front, back, size: 16),
+      Label(text: linearAmplitude ? "Amplitude" : "Amplitude (dB)", at: top + CGVector(dx: -63 * z, dy: 53 * z), size: 15 * z, align: 0),
+      title("Frequency (Hz)", origin, front, size: 17 * z),
+      title("Time (s)", front, back, size: 16 * z),
     ]
-    var labels = levels.compactMap { db, text in at(0, 0, height(db)).map { Label(text: text, at: $0 - CGVector(dx: 15, dy: 0), size: 13, align: 1) } }
+    var labels = levels.compactMap { db, text in at(0, 0, height(db)).map { Label(text: text, at: $0 - CGVector(dx: 15 * z, dy: 0), size: 13 * z, align: 1) } }
     let ticks: [(Float, String)] = [(20, "20"), (50, "50"), (100, "100"), (200, "200"), (500, "500"), (1000, "1k"), (2000, "2k"),
       (5000, "5k"), (10000, "10k"), (20000, "20k")]
     labels += ticks.compactMap { f, text in
-      at(SpectrumAnalyzer.position(f, log: logFrequency), 0, 0).map { Label(text: text, at: $0 + CGVector(dx: -9, dy: -23), size: 15) }
+      at(SpectrumAnalyzer.position(f, log: logFrequency), 0, 0).map { Label(text: text, at: $0 + CGVector(dx: -9 * z, dy: -23 * z), size: 15 * z) }
     }
     labels += (0...seconds).filter { seconds <= 5 || $0 % 2 == 0 }.compactMap { s in
-      at(1, CGFloat(s) / CGFloat(seconds), 0).map { Label(text: "\(s)", at: $0 + CGVector(dx: 18, dy: -4), size: 14, align: 0) }
+      at(1, CGFloat(s) / CGFloat(seconds), 0).map { Label(text: "\(s)", at: $0 + CGVector(dx: 18 * z, dy: -4 * z), size: 14 * z, align: 0) }
     }
     // Seen edge on, an axis bunches its ticks: keep the titles, then each tick that clears all kept so far.
     return (titles + labels).reduce(into: [Label]()) { kept, label in
