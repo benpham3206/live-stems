@@ -292,14 +292,18 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   @objc private func statusClicked() {
     let event = NSApp.currentEvent
     guard event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true else { return showPanel() }
+    item.menu = statusMenu()
+    item.button?.performClick(nil)
+    item.menu = nil
+  }
+  /// The right-click menu: dockMenu items, a separator, then Quit last.
+  func statusMenu() -> NSMenu {
     let menu = dockMenu()
     menu.addItem(.separator())
     let quit = NSMenuItem(title: "Quit Live Stems", action: #selector(quitApp), keyEquivalent: "")
     quit.target = self
     menu.addItem(quit)
-    item.menu = menu
-    item.button?.performClick(nil)
-    item.menu = nil
+    return menu
   }
   // MARK: Dock and menu bar visibility
   /// Applies the saved choice. E2E controllers skip the policy so tests never change the app.

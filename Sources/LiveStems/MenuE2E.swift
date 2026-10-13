@@ -304,6 +304,16 @@ enum MenuE2E {
     _ = NSApp.sendAction(toggles[1].action!, to: toggles[1].target, from: toggles[1])
     try require(Visibility.dock && !Visibility.menuBar, "Menu bar toggle did not hide the status item")
     checks.append(["name": "dock_and_menu_bar_toggles"])
+    // Status right-click menu ends with Quit. Checked by structure only; Quit is never invoked.
+    let statusItems = controller.statusMenu().items, base = controller.dockMenu().items
+    try require(statusItems.count == base.count + 2, "Status menu has \(statusItems.count) items, expected dock items, separator, Quit")
+    try require(statusItems[base.count].isSeparatorItem, "Status menu item before Quit is not a separator")
+    try require(statusItems.dropLast(2).map(\.title) == base.map(\.title), "Status menu does not start with the dock menu items")
+    let statusQuit = statusItems[statusItems.count - 1]
+    try require(statusQuit.title == "Quit Live Stems", "Status menu does not end with Quit Live Stems")
+    try require(statusQuit.target as AnyObject? === controller, "Quit Live Stems target is not the controller")
+    try require(statusQuit.action == NSSelectorFromString("quitApp"), "Quit Live Stems action is not quitApp")
+    checks.append(["name": "status_menu_ends_with_quit", "items": statusItems.map(\.title)])
     return checks
   }
   static func snapshot(_ out: URL) throws {
