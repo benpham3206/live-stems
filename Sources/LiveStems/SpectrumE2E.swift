@@ -212,6 +212,10 @@ enum SpectrumE2E {
       return Scope(mix: mix, original: mix, rate: rate)
     }
     guard controller.feed(scope(silentFor: 0.1)) else { throw StemError("100 ms of silence paused the view") }
+    // Silence drops every level to nothing with one empty row, then holds.
+    guard !controller.feed(scope(silentFor: 0.16)), view.heard.allSatisfy({ $0 < -150 }), view.original.allSatisfy({ $0 < -150 }) else {
+      throw StemError("Silence left the levels standing")
+    }
     view.window?.displayIfNeeded()
     let rows = view.rowsPushed, frames = view.framesDrawn
     for _ in 0..<(SpectrumView.rowsPerSecond) {  // a second of silence, then of no session

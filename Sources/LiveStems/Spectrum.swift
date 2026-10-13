@@ -41,6 +41,15 @@ final class SpectrumView: NSView {
     rowsPushed += 1
     if threeD { redraw() } else { needsDisplay = true }
   }
+  /// Silence: every level drops to nothing, with one empty row at the front, then the view holds.
+  func hush() {
+    let floor = [Float](repeating: -200, count: SpectrumAnalyzer.bands)
+    lastRow = nil
+    push(heard: floor, original: floor)
+    heard = floor
+    original = floor
+    if !threeD { needsDisplay = true }
+  }
   /// Rows taken so far, and whether a redraw waits: for the checks.
   private(set) var rowsPushed = 0, framesDrawn = 0
   var redrawPending: Bool { needsDisplay || overlay.needsDisplay }
@@ -268,20 +277,9 @@ final class SpectrumView: NSView {
     let z = CGFloat(min(1.6, max(0.6, camera.zoom)))
     func at(_ f: CGFloat, _ t: CGFloat, _ v: CGFloat) -> CGPoint? { camera.point(SIMD3(Float(f), Float(t), Float(v)), in: size) }
     guard let origin = at(0, 0, 0), let front = at(1, 0, 0), let top = at(0, 0, 1), let back = at(1, 1, 0) else { return [] }
-    // An axis title lies level under its axis. A lying axis has it under the middle, out at right angles;
-    // as the axis stands up, it slides to under the lower end, straight down. The blend follows how level
-    // the axis lies, so turning the view moves the title smoothly, never in a jump.
+    // An axis title lies level, a fixed distance straight under the middle of its axis.
     func title(_ text: String, _ from: CGPoint, _ to: CGPoint, size: CGFloat) -> Label {
-      // An axis seen end on, short on screen, counts as standing up: its direction there means nothing.
-      // It stays under the middle until the axis stands within about 33 degrees of upright, then slides.
-      let run = max(1e-3, hypot(to.x - from.x, to.y - from.y))
-      let flat = min(1, max(0, (abs(to.x - from.x) / run - 0.05) / 0.5)), level = flat * min(1, run / 120)
-      var out = CGVector(dx: (from.y - to.y) / run, dy: (to.x - from.x) / run)
-      if out.dy > 0 { out = CGVector(dx: -out.dx, dy: -out.dy) }
-      let low = from.y < to.y ? from : to, mid = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2)
-      let anchor = CGPoint(x: low.x + (mid.x - low.x) * flat, y: low.y + (mid.y - low.y) * flat)
-      let way = CGVector(dx: out.dx * level, dy: out.dy * level - (1 - level)), length = max(1e-3, hypot(way.dx, way.dy))
-      return Label(text: text, at: anchor + CGVector(dx: way.dx / length * 58 * z, dy: way.dy / length * 58 * z), size: size)
+      Label(text: text, at: CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 - 52 * z), size: size)
     }
     let titles = [
       Label(text: linearAmplitude ? "Amplitude" : "Amplitude (dB)", at: top + CGVector(dx: -63 * z, dy: 53 * z), size: 15 * z, align: 0),

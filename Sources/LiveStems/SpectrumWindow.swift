@@ -6,7 +6,7 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
   let view = SpectrumView()
   private var analyzer = SpectrumAnalyzer()
-  private var timer: Timer?
+  private var timer: Timer?, hushed = false
   /// Supplies the newest samples as heard now, or nil when nothing plays through Live Stems.
   private let read: (@escaping (Scope?) -> Void) -> Void
   private let mode = Choice(["3D", "2D"])
@@ -170,7 +170,12 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
   /// for 150 ms, no row and no redraw: the view stands still until sound comes back.
   @discardableResult func feed(_ scope: Scope?) -> Bool {
     view.hint = scope == nil ? "Shows what Live Stems plays. Press M or S on a stem to start." : nil
-    guard let scope, scope.mix.suffix(Int(0.15 * scope.rate)).contains(where: { abs($0) > 3.2e-5 }) else { return false }
+    guard let scope, scope.mix.suffix(Int(0.15 * scope.rate)).contains(where: { abs($0) > 3.2e-5 }) else {
+      if !hushed { view.hush() }
+      hushed = true
+      return false
+    }
+    hushed = false
     analyzer.rate = scope.rate
     view.push(heard: analyzer.levels(scope.mix, log: view.logFrequency), original: analyzer.levels(scope.original, log: view.logFrequency))
     return true

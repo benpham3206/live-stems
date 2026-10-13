@@ -308,7 +308,8 @@ final class Waterfall {
       float d = abs(in.across) / f.scale, r = in.width / f.scale;
       float halo = (0.08 + 0.30 * v) * exp(-4 * d * d / (r * r)) * (1 - smoothstep(0.7 * r, r, d));
       float core = 0.85 * clamp(0.25 * f.scale + 0.5 - abs(in.across), 0.0, 1.0);
-      return float4(in.color.rgb * (1.4 * core + halo * 0.7), core) * in.fade;
+      // The halo half covers what lies behind it, so rows stacked edge on stop summing to white.
+      return float4(in.color.rgb * (1.4 * core + halo * 0.7), max(core, 0.5 * halo)) * in.fade;
     }
 
     struct Segment { float4 a, b, color; };
