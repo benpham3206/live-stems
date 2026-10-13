@@ -206,7 +206,9 @@ and switching headphones or speakers keeps Live Stems running.
   so it stays in time on AirPods too. **3D** is a rolling waterfall with the newest moment in front;
   **2D** is laid out like MiniMeters: coloured bars for what you hear, a white outline for the original
   song (a muted stem shows as the gap between them), and a spectrogram scrolling down below. Choose log
-  or linear frequency, dB or linear amplitude, and a 2, 5 or 10 second span. The gear holds the model choice.
+  or linear frequency and a 2, 5 or 10 second span; dB or linear height applies to 3D only. In 3D, right-drag
+  to turn the view to any angle, left-drag to move the window, double-click to reset. It freezes when the
+  music is silent. The gear holds the model choice.
 - **Choose the model**: right-click **Stems** in the menu bar (or the Dock icon) and open **Model**.
   *Automatic* uses the fine-tuned model and switches to the standard one if your GPU is too slow for it.
   *Fine-tuned* is cleaner; *Standard* is lighter. The music keeps playing while the model reloads.
