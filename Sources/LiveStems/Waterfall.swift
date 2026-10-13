@@ -248,11 +248,11 @@ final class Waterfall {
     }
     // Quiet is blue, rising through violet into the band's own hue where loud and standing
     // out; the tallest peaks burn toward white. Older rows dim.
-    static float3 shade(float v, float rise, float3 hue, float t) {
+    static float3 shade(float v, float rise, float3 hue) {
       float3 c = mix(float3(0.16, 0.34, 1.0), float3(0.55, 0.18, 1.0), smoothstep(0.30, 0.48, v));
       c = mix(c, hue, smoothstep(0.38, 0.62, v) * smoothstep(0.02, 0.14, rise));
       c = mix(c, float3(1.0, 0.97, 0.88), smoothstep(0.90, 1.0, v) * 0.5);
-      return c * (0.80 + 0.20 * smoothstep(0.3, 0.8, v)) * (1 - 0.50 * t);  // half as bright at the back of the span
+      return c * (0.80 + 0.20 * smoothstep(0.3, 0.8, v));
     }
     // The newest rows fade in from clear over the first fifth of the box: a soft front edge.
     static float emerge(float t) { return 0.05 + 0.95 * smoothstep(0.0, 0.2, t); }
@@ -276,7 +276,7 @@ final class Waterfall {
       float va = height(levels[i], f.linear), vb = height(levels[i + 1], f.linear), v = height(levels[at], f.linear);
       float xa = float(i) / (f.bands - 1), xb = float(i + 1) / (f.bands - 1);
       Lit out;
-      out.color = float4(shade(v, prominence(levels, f.bands, at, v, f.linear), hues[at].rgb, t), v);
+      out.color = float4(shade(v, prominence(levels, f.bands, at, v, f.linear), hues[at].rgb), v);
       if (line) {
         float4 a = f.clip * float4(xa, t, va, 1), b = f.clip * float4(xb, t, vb, 1);
         // Out to the edge of the halo, wider where loud; the glow's strength rides in alpha.
@@ -290,7 +290,9 @@ final class Waterfall {
         out.across = sheetTops[corner];
         out.width = -1;
       }
-      out.fade = emerge(t);
+      // Down to a quarter of its light at the back of the span. On the fade, not the colour, so rows
+      // stacked edge on stop adding up to white and the dimming shows.
+      out.fade = emerge(t) * (1 - 0.75 * t);
       return out;
     }
     fragment float4 rowLight(Lit in [[stage_in]], constant Frame &f [[buffer(0)]]) {
