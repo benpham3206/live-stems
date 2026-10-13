@@ -322,15 +322,19 @@ final class SessionController {
       DispatchQueue.main.async { done(peaks) }
     }
   }
-  /// The newest `frames` of the mono mix as the speakers play it now, and of the original
-  /// song at the same moments; nil when no session runs.
+  /// `frames` of the mono mix and of the original song at the same moments, ending
+  /// `SpectrumAnalyzer.ahead` frames after what the speakers play now, as far as the output
+  /// has rendered; nil when no session runs.
   func takeScope(frames: Int, _ done: @escaping (Scope?) -> Void) {
     queue.async {
       var mix = [Float](repeating: 0, count: frames), original = mix
       var result: Scope?
       if let audio = self.audio {
-        let delay = UInt32(max(0, audio.outputLatency) * 44100)
-        if ls_read_scope(audio.core, &mix, &original, UInt32(frames), delay) > 0 { result = Scope(mix: mix, original: original) }
+        // The scope holds frames as rendered, at the device rate; the speakers play them a latency later.
+        let delay = UInt32(max(0, audio.outputLatency * audio.rate - Double(SpectrumAnalyzer.ahead)))
+        if ls_read_scope(audio.core, &mix, &original, UInt32(frames), delay) > 0 {
+          result = Scope(mix: mix, original: original, rate: Float(audio.rate))
+        }
       }
       DispatchQueue.main.async { done(result) }
     }
