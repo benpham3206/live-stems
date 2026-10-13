@@ -12,12 +12,14 @@ struct Camera: Equatable {
   static let box = SIMD3<Float>(1, 0.2779, 0.6473), distance: Float = 1.9204, fov: Float = 20 * .pi / 180
   /// Room for the axis labels around the box at the reference view, in points.
   static let margin = (left: Float(66), right: Float(96), bottom: Float(40), top: Float(12))
-  var yaw: Float, pitch: Float
+  var yaw: Float, pitch: Float, zoom: Float = 1
 
   mutating func turn(dx: Float, dy: Float) {
     yaw = (yaw - dx).truncatingRemainder(dividingBy: 2 * .pi)
     pitch = min(89 * .pi / 180, max(-89 * .pi / 180, pitch - dy))
   }
+  /// Grows the picture by e^steps, from half size to 4×.
+  mutating func magnify(_ steps: Float) { zoom = min(4, max(0.5, zoom * exp(steps))) }
   /// The eye in box units: (frequency, time, height), each 0 to 1 across the box.
   var eye: SIMD3<Float> {
     let world = SIMD3(Self.distance * cos(pitch) * sin(yaw), Self.box.y / 2 + Self.distance * sin(pitch), Self.distance * cos(pitch) * cos(yaw))
@@ -48,7 +50,7 @@ struct Camera: Equatable {
   func clip(width: Float, height: Float, scale: Float = 1) -> simd_float4x4 {
     let m = Self.margin, e = Self.extent
     let room = SIMD2(width - (m.left + m.right) * scale, height - (m.bottom + m.top) * scale)
-    let k = max(1e-3, min(room.x / (e.hi.x - e.lo.x), room.y / (e.hi.y - e.lo.y)))  // pixels per focal unit
+    let k = zoom * max(1e-3, min(room.x / (e.hi.x - e.lo.x), room.y / (e.hi.y - e.lo.y)))  // pixels per focal unit
     let offset = SIMD2(m.left - m.right, m.bottom - m.top) * scale / 2 - k * (e.lo + e.hi) / 2  // from the view's centre
     let project = simd_float4x4(columns: (
       SIMD4(2 * k * Self.focal / width, 0, 0, 0), SIMD4(0, 2 * k * Self.focal / height, 0, 0),
@@ -76,7 +78,7 @@ final class Waterfall {
     var clip: simd_float4x4
     var pixels: SIMD2<Float>
     var scale: Float
-    var bands, capacity, newest, shown, linear: UInt32
+    var bands, capacity, newest, full, linear: UInt32
     var ground: Float
   }
   /// Ten seconds of rows and one spare, so the row being replaced is never one being drawn.
@@ -176,17 +178,18 @@ final class Waterfall {
       blur?.edgeMode = .clamp
     }
     guard let scene, let glow, let blur, let hueBuffer else { return }
-    let shown = min(count, seconds * SpectrumView.rowsPerSecond)
+    // Depth is age over the whole span, so a new row starts receding at once, as the old trail did.
+    let full = seconds * SpectrumView.rowsPerSecond, shown = min(count, full)
     // Every other row, as the reference's ridges are spaced, chosen by its place in the whole
     // stream so a row keeps being drawn as it recedes. Far rows first: by how far each row's
     // plane lies from the eye along time.
-    let eye = camera.eye, span = Float(max(1, shown - 1))
+    let eye = camera.eye, span = Float(max(1, full - 1))
     let rows = (0..<shown).filter { (pushed - 1 - $0) % 2 == 0 }
       .map { age in ((newest - age + Self.capacity) % Self.capacity, abs(Float(age) / span - eye.y)) }
       .sorted { $0.1 > $1.1 }.map { UInt32($0.0) }
     rows.withUnsafeBytes { if $0.count > 0 { order.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
     var frame = Frame(clip: camera.clip(width: Float(width), height: Float(height), scale: scale), pixels: [Float(width), Float(height)], scale: scale,
-      bands: UInt32(SpectrumAnalyzer.bands), capacity: UInt32(Self.capacity), newest: UInt32(newest), shown: UInt32(shown),
+      bands: UInt32(SpectrumAnalyzer.bands), capacity: UInt32(Self.capacity), newest: UInt32(newest), full: UInt32(full),
       linear: linear ? 1 : 0, ground: eye.z < 0 ? 0.06 : 0.25)
     let pass = MTLRenderPassDescriptor()
     pass.colorAttachments[0].texture = scene
@@ -229,7 +232,7 @@ final class Waterfall {
   private static let shader = """
     #include <metal_stdlib>
     using namespace metal;
-    struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, shown, linear; float ground; };
+    struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, full, linear; float ground; };
     struct Lit { float4 position [[position]]; float4 color; float across; float width; float fade; };
     constant uint sheetEnds[6] = {0, 0, 1, 1, 0, 1};
     constant float sheetTops[6] = {1, 0, 1, 1, 0, 0};
@@ -267,7 +270,7 @@ final class Waterfall {
       const device float *ring [[buffer(1)]], const device float4 *hues [[buffer(2)]], const device uint *order [[buffer(3)]]) {
       uint index = order[instance], age = (f.newest + f.capacity - index) % f.capacity, sheet = (f.bands - 1) * 6;
       const device float *levels = ring + index * f.bands;
-      float t = float(age) / max(1.0, float(f.shown - 1));
+      float t = float(age) / max(1.0, float(f.full - 1));
       bool line = id >= sheet;
       uint corner = id % 6, i = (id % sheet) / 6, at = i + (line ? lineEnds[corner] : sheetEnds[corner]);
       float va = height(levels[i], f.linear), vb = height(levels[i + 1], f.linear), v = height(levels[at], f.linear);

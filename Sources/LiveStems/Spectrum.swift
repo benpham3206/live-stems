@@ -197,6 +197,12 @@ final class SpectrumView: NSView {
     turning = to
   }
   override func rightMouseUp(with event: NSEvent) { turning = nil }
+  /// Scroll up (as the hand moves, whatever natural scrolling says) to zoom in.
+  override func scrollWheel(with event: NSEvent) {
+    guard threeD else { return super.scrollWheel(with: event) }
+    let up = Float(event.scrollingDeltaY) * (event.isDirectionInvertedFromDevice ? -1 : 1)
+    camera.magnify(up * (event.hasPreciseScrollingDeltas ? 0.01 : 0.1))
+  }
   override func menu(for event: NSEvent) -> NSMenu? { nil }
 
   /// The 3D view drawn off screen, rows and overlay, for checks and pictures.

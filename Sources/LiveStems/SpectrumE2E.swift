@@ -238,6 +238,17 @@ enum SpectrumE2E {
       try NSBitmapImageRep(cgImage: glass.makeImage()!).representation(using: .png, properties: [:])!
         .write(to: out.appendingPathComponent("spectrum-below.png"))
     }
+    // Scrolling up zooms in, down zooms out, within half size to 4×.
+    func scroll(_ lines: Int32) -> NSEvent {
+      NSEvent(cgEvent: CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0)!)!
+    }
+    view.camera = .reference
+    view.scrollWheel(with: scroll(3))
+    guard view.camera.zoom > 1.2, view.camera.yaw == start.yaw else { throw StemError("Scrolling up did not zoom in: \(view.camera)") }
+    for _ in 0..<40 { view.scrollWheel(with: scroll(3)) }
+    guard view.camera.zoom == 4 else { throw StemError("Zoom went past 4×: \(view.camera.zoom)") }
+    for _ in 0..<80 { view.scrollWheel(with: scroll(-3)) }
+    guard view.camera.zoom == 0.5 else { throw StemError("Zoom went past half size: \(view.camera.zoom)") }
     view.mouseDown(with: event(.leftMouseDown, 300, 300, clicks: 2))
     guard view.camera == .reference else { throw StemError("A double-click did not put the view back") }
   }
