@@ -15,7 +15,7 @@ if [[ -z "$stem_identity" && -f "$stem_identityfile" ]]; then
   read -r stem_identity < "$stem_identityfile"
 fi
 if [[ ! "$stem_identity" =~ ^[[:xdigit:]]{40}$ ]]; then
-  echo 'A stable signing certificate is required. See README.md: One-time signing setup.' >&2
+  echo 'A stable signing certificate is required. See README.md: Make a signing certificate.' >&2
   echo 'The installed app was not stopped or replaced.' >&2
   exit 3
 fi
