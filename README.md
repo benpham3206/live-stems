@@ -194,7 +194,7 @@ and switching headphones or speakers keeps Live Stems running.
 
 ## Using it
 
-- **Move a slider, press M or S:** the stems fade in within a second.
+- **Move a slider (drag it, or scroll over it), press M or S:** the stems fade in within a second.
 - **Waveforms** show each stem's level before its slider. A muted stem still shows its waveform, dimmed.
   They are flat while the model sleeps.
 - **The model sleeps when it isn't needed**, so your GPU and battery rest: when all four stems are at
