@@ -288,11 +288,16 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
     item.isVisible = Visibility.menuBar
   }
-  /// A plain click opens the panel; right-click or control-click offers the visibility toggles.
+  /// A plain click opens the panel; right-click or control-click offers the visibility toggles and Quit.
   @objc private func statusClicked() {
     let event = NSApp.currentEvent
     guard event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true else { return showPanel() }
-    item.menu = dockMenu()
+    let menu = dockMenu()
+    menu.addItem(.separator())
+    let quit = NSMenuItem(title: "Quit Live Stems", action: #selector(quitApp), keyEquivalent: "")
+    quit.target = self
+    menu.addItem(quit)
+    item.menu = menu
     item.button?.performClick(nil)
     item.menu = nil
   }

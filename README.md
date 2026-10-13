@@ -204,7 +204,9 @@ and switching headphones or speakers keeps Live Stems running.
 - **Spectrum Analyzer** (the bars button): shows the sound Live Stems plays, as you hear it. Mute,
   solo or move a fader and the spectrum changes with the sound. It waits for your output's delay,
   so it stays in time on AirPods too. **3D** is a rolling waterfall with the newest moment in front;
-  **2D** is a spectrogram with time across. Choose log or linear frequency and a 2, 5 or 10 second span.
+  **2D** is laid out like MiniMeters: coloured bars for what you hear, a white outline for the original
+  song (a muted stem shows as the gap between them), and a spectrogram scrolling down below. Choose log
+  or linear frequency, dB or linear amplitude, and a 2, 5 or 10 second span. The gear holds the model choice.
 - **Choose the model**: right-click **Stems** in the menu bar (or the Dock icon) and open **Model**.
   *Automatic* uses the fine-tuned model and switches to the standard one if your GPU is too slow for it.
   *Fine-tuned* is cleaner; *Standard* is lighter. The music keeps playing while the model reloads.
