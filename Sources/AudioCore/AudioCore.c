@@ -28,7 +28,7 @@ struct LSCore {
     float meter_hold[4];
     atomic_uint meter[4];
     // The mono mix as rendered, for the spectrum analyzer. Only the render thread writes.
-    float scope[LS_SCOPE_FRAMES];
+    float scope[LS_SCOPE_FRAMES], scope_original[LS_SCOPE_FRAMES], original_now;
     atomic_ullong scope_write;
 };
 static void init_ring(Ring *r, uint32_t n, uint32_t ch) { r->capacity=n; r->channels=ch; r->data=calloc((size_t)n*ch,sizeof(float)); }
@@ -93,7 +93,7 @@ float ls_rendered_stem_weight(LSCore *c){uint32_t bits=atomic_load(&c->rendered_
 uint32_t ls_output_write(LSCore *c,const float *data,uint32_t n){return ls_output_write_timed(c,data,n,UINT64_MAX,0);}
 uint32_t ls_output_write_timed(LSCore *c,const float *data,uint32_t n,uint64_t source_start,double capture_end_host_seconds){Ring *r=&c->output;uint64_t pos=atomic_load(&r->write),read=atomic_load(&r->read);if(n>r->capacity-(pos-read)){atomic_fetch_add(&c->overflows,1);return 0;}for(uint32_t i=0;i<n;i++){uint64_t slot=(pos+i)%r->capacity;memcpy(r->data+slot*11,data+i*11,44);c->output_frames[slot]=source_start==UINT64_MAX?UINT64_MAX:source_start+i;c->output_times[slot]=capture_end_host_seconds>0?(uint64_t)((capture_end_host_seconds-(double)(n-i)/c->rate)*1e9):0;}atomic_store(&r->write,pos+n);return n;}
 static int next_frame(LSCore *c,float *left,float *right){
-    *left=*right=0; if(!atomic_load(&c->enabled))return 0;
+    *left=*right=0;c->original_now=0; if(!atomic_load(&c->enabled))return 0;
     uint64_t epoch=atomic_load(&c->epoch);
     if(epoch!=c->render_epoch){c->render_epoch=epoch;c->last_left=c->last_right=c->envelope=0;c->stem_blend=atomic_load(&c->stems)?1:0;c->priming=1;c->fade_out=0;c->fade_total=0;}
     Ring *r=&c->output;uint64_t pos=atomic_load(&r->read);
@@ -171,14 +171,15 @@ static int next_frame(LSCore *c,float *left,float *right){
     *left=(*left*weight+f[8]*fallback*(1-weight))*c->envelope;
     *right=(*right*weight+f[9]*fallback*(1-weight))*c->envelope;
     // Spotify's fade shape, measured with skip-probe: gain (1 - t/T)^4.
-    if(c->fade_total){float t=1-(float)c->fade_done++/(float)c->fade_total,g=t*t*t*t;*left*=g;*right*=g;}
+    c->original_now=(f[8]+f[9])*.5f*c->envelope;
+    if(c->fade_total){float t=1-(float)c->fade_done++/(float)c->fade_total,g=t*t*t*t;*left*=g;*right*=g;c->original_now*=g;}
     c->last_left=*left;c->last_right=*right;
     c->render_trace.source_frame=c->output_frames[pos%r->capacity];c->render_trace.capture_nanos=c->output_times[pos%r->capacity];
     atomic_store(&r->read,pos+1);atomic_fetch_add(&c->played,1);return 1;
 }
 uint32_t ls_read_mix(LSCore *c,float *out,uint32_t n){uint32_t got=0;uint64_t epoch=atomic_load(&c->epoch);for(uint32_t i=0;i<n;i++){float l=0,r=0;if(epoch==atomic_load(&c->epoch))got+=next_frame(c,&l,&r);out[i*2]=l;out[i*2+1]=r;}publish_trace(c);publish_meters(c);return got;}
 void ls_render(LSCore *c,uint32_t n,AudioBufferList *out){ls_render_timed(c,n,out,NULL);}
-void ls_render_timed(LSCore *c,uint32_t n,AudioBufferList *out,const AudioTimeStamp *time){uint64_t host=(time && (time->mFlags & kAudioTimeStampHostTimeValid))?AudioConvertHostTimeToNanos(time->mHostTime):0;uint64_t epoch=atomic_load(&c->epoch);for(uint32_t i=0;i<n;i++){float l=0,r=0;if(epoch==atomic_load(&c->epoch) && next_frame(c,&l,&r) && host)c->render_trace.render_nanos=host+(uint64_t)(i*1e9/c->rate);c->scope[(atomic_load_explicit(&c->scope_write,memory_order_relaxed)+i)%LS_SCOPE_FRAMES]=(l+r)*.5f;if(out->mNumberBuffers==1){float *p=out->mBuffers[0].mData;if(p){p[i*2]=l;p[i*2+1]=r;}}else if(out->mNumberBuffers>=2){float *a=out->mBuffers[0].mData,*b=out->mBuffers[1].mData;if(a)a[i]=l;if(b)b[i]=r;}}atomic_fetch_add(&c->scope_write,n);publish_trace(c);publish_meters(c);}
+void ls_render_timed(LSCore *c,uint32_t n,AudioBufferList *out,const AudioTimeStamp *time){uint64_t host=(time && (time->mFlags & kAudioTimeStampHostTimeValid))?AudioConvertHostTimeToNanos(time->mHostTime):0;uint64_t epoch=atomic_load(&c->epoch);for(uint32_t i=0;i<n;i++){float l=0,r=0;if(epoch==atomic_load(&c->epoch) && next_frame(c,&l,&r) && host)c->render_trace.render_nanos=host+(uint64_t)(i*1e9/c->rate);{uint64_t at=(atomic_load_explicit(&c->scope_write,memory_order_relaxed)+i)%LS_SCOPE_FRAMES;c->scope[at]=(l+r)*.5f;c->scope_original[at]=c->original_now;}if(out->mNumberBuffers==1){float *p=out->mBuffers[0].mData;if(p){p[i*2]=l;p[i*2+1]=r;}}else if(out->mNumberBuffers>=2){float *a=out->mBuffers[0].mData,*b=out->mBuffers[1].mData;if(a)a[i]=l;if(b)b[i]=r;}}atomic_fetch_add(&c->scope_write,n);publish_trace(c);publish_meters(c);}
 OSStatus ls_capture_callback(AudioDeviceID d,const AudioTimeStamp *now,const AudioBufferList *in,const AudioTimeStamp *it,AudioBufferList *out,const AudioTimeStamp *ot,void *context){
     LSCore *c=context;if(!c || !in || !in->mNumberBuffers)return noErr;uint64_t epoch=atomic_load(&c->epoch);Ring *r=&c->capture;
     int planar=in->mNumberBuffers==2 && in->mBuffers[0].mNumberChannels==1 && in->mBuffers[1].mNumberChannels==1;
@@ -192,9 +193,9 @@ OSStatus ls_capture_callback(AudioDeviceID d,const AudioTimeStamp *now,const Aud
     if(epoch==atomic_load(&c->epoch))atomic_compare_exchange_strong(&r->write,&pos,pos+n);return noErr;
 }
 // ponytail: a read can race the render thread and see a few newer samples; harmless for a display.
-uint32_t ls_read_scope(LSCore *c,float *out,uint32_t n,uint32_t delay){
+uint32_t ls_read_scope(LSCore *c,float *out,float *original,uint32_t n,uint32_t delay){
     uint64_t end=atomic_load(&c->scope_write);
     if(n+delay>LS_SCOPE_FRAMES || end<n+delay)return 0;
-    end-=delay;for(uint32_t i=0;i<n;i++)out[i]=c->scope[(end-n+i)%LS_SCOPE_FRAMES];
+    end-=delay;for(uint32_t i=0;i<n;i++){uint64_t at=(end-n+i)%LS_SCOPE_FRAMES;out[i]=c->scope[at];if(original)original[i]=c->scope_original[at];}
     return n;
 }

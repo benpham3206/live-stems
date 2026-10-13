@@ -35,9 +35,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     defer: false)
   private let windowLog = Logger(subsystem: "com.benpham.livestems", category: "Windowing")
   private let panel = ControlsPanel()
-  private lazy var spectrum = SpectrumWindowController { [weak self] done in
+  private lazy var spectrum = SpectrumWindowController(read: { [weak self] done in
     self?.session.takeScope(frames: SpectrumAnalyzer.size, done)
-  }
+  }, settings: { [weak self] in self?.modelMenu() ?? NSMenu() })
   private var sourcePicker: NSPopUpButton { panel.sourcePicker }
   private var active = false, panelRequested = true, controls = StemControls()
   private var meterTimer: Timer?
@@ -313,20 +313,24 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       entry.target = self
       menu.addItem(entry)
     }
-    let models = NSMenu()
+    let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+    modelItem.submenu = modelMenu()
+    menu.addItem(.separator())
+    menu.addItem(modelItem)
+    return menu
+  }
+  @objc private func showSpectrum() { spectrum.show() }
+  /// Automatic, Fine-tuned, Standard; in the Dock and status menus and behind the analyzer's gear.
+  func modelMenu() -> NSMenu {
+    let models = NSMenu(title: "Model")
     for model in StemModel.allCases {
       let entry = NSMenuItem(title: model.title, action: #selector(pickModel(_:)), keyEquivalent: "")
       entry.target = self
       entry.representedObject = model.rawValue
       models.addItem(entry)
     }
-    let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
-    modelItem.submenu = models
-    menu.addItem(.separator())
-    menu.addItem(modelItem)
-    return menu
+    return models
   }
-  @objc private func showSpectrum() { spectrum.show() }
   @objc private func pickModel(_ sender: NSMenuItem) {
     guard let model = StemModel(rawValue: sender.representedObject as? String ?? "") else { return }
     session.setModel(model)

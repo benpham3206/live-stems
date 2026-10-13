@@ -16,13 +16,13 @@ enum SpectrumE2E {
       guard levels.min()! < expected - 60 else { throw StemError("Sine \(hz) Hz leaks across the spectrum") }
     }
     let silent = analyzer.levels([Float](repeating: 0, count: SpectrumAnalyzer.size), log: true)
-    guard silent.allSatisfy({ $0 <= SpectrumView.floor }) else { throw StemError("Silence is not at the floor") }
+    guard silent.allSatisfy({ $0 <= -120 }) else { throw StemError("Silence is not at the floor") }
 
     // Music-like test signal: a bass line, a chord with rich harmonics and vibrato,
     // a kick every half second and hi-hat noise, through the real analyzer.
     let controller = SpectrumWindowController { $0(nil) }
     let view = controller.view
-    controller.window.setContentSize(NSSize(width: 1100, height: 680))
+    controller.window.setContentSize(NSSize(width: 1240, height: 760))
     controller.window.contentView?.layoutSubtreeIfNeeded()
     var generator = SystemRandomNumberGenerator()
     var pushSeconds = [Double]()
@@ -31,19 +31,26 @@ enum SpectrumE2E {
       let time = Float(frame) / Float(SpectrumView.rowsPerSecond)
       let chord = progression[Int(time / 1.25) % 4], beat = time.truncatingRemainder(dividingBy: 0.5)
       let kick = beat < 0.12 ? exp(-beat * 30) : 0, hat = beat > 0.25 && beat < 0.32 ? Float(0.25) : 0.001
-      let samples = (0..<SpectrumAnalyzer.size).map { n -> Float in
+      // The original has a sung line; what you hear has it muted, as with Vocals muted.
+      var heard = [Float](), song = [Float]()
+      let note = 392 * pow(2, Float([0, 2, 4, 7, 4, 2][Int(time / 0.4) % 6]) / 12)
+      for n in 0..<SpectrumAnalyzer.size {
         let t = Float(n) / SpectrumAnalyzer.rate + time
         var x = Float.random(in: -1...1, using: &generator) * hat * 0.2
         x += kick * 0.8 * sin(2 * .pi * (50 + 60 * kick) * t)
         x += 0.25 * sin(2 * .pi * 55 * pow(2, chord[0] / 12) * t)
         for (k, step) in chord.enumerated() {
           let f = 220 * pow(2, step / 12) * (1 + 0.004 * sin(2 * .pi * 5 * t + Float(k)))
-          for h in 1...16 where f * Float(h) < 18000 { x += 0.08 / pow(Float(h), 1.3) * sin(2 * .pi * f * Float(h) * t) }
+          for h in 1...16 where f * Float(h) < 18000 { x += 0.03 / pow(Float(h), 1.3) * sin(2 * .pi * f * Float(h) * t) }
         }
-        return x
+        var voice: Float = 0
+        let sung = note * (1 + 0.01 * sin(2 * .pi * 5.5 * t))
+        for h in 1...20 where sung * Float(h) < 16000 { voice += 0.12 / Float(h) * sin(2 * .pi * sung * Float(h) * t) }
+        heard.append(x)
+        song.append(x + voice)
       }
-      let levels = analyzer.levels(samples, log: true), began = stemClock()
-      view.push(levels)
+      let levels = (analyzer.levels(heard, log: true), analyzer.levels(song, log: true)), began = stemClock()
+      view.push(heard: levels.0, original: levels.1)
       pushSeconds.append(stemClock() - began)
     }
     var timings = ["push": pushSeconds.sorted()[pushSeconds.count * 95 / 100]]
@@ -62,6 +69,21 @@ enum SpectrumE2E {
       image.unlockFocus()
       try NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
         .write(to: out.appendingPathComponent("spectrum-\(name).png"))
+    }
+    // The whole window, toolbar included, over a dusk-blue stand-in for the desktop behind the glass.
+    view.threeD = true
+    if let content = controller.window.contentView {
+      let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
+      content.cacheDisplay(in: content.bounds, to: rep)
+      let image = NSImage(size: content.bounds.size)
+      image.addRepresentation(rep)
+      image.lockFocus()
+      NSGradient(starting: NSColor(srgbRed: 0.16, green: 0.18, blue: 0.27, alpha: 1),
+        ending: NSColor(srgbRed: 0.09, green: 0.10, blue: 0.16, alpha: 1))!.draw(in: content.bounds, angle: -90)
+      rep.draw(in: content.bounds, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+      image.unlockFocus()
+      try NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
+        .write(to: out.appendingPathComponent("spectrum-window.png"))
     }
     // A row and a draw must fit well inside the 33 ms row period.
     guard timings["push"]! + timings["3d"]! < 0.020, timings["2d"]! < 0.020 else { throw StemError("Spectrum draw too slow: \(timings)") }
