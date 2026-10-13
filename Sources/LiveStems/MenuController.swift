@@ -327,7 +327,6 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     return menu
   }
   @objc private func showSpectrum() { spectrum.show() }
-  var e2eSpectrum: SpectrumWindowController { spectrum }
   @objc private func pickModel(_ sender: NSMenuItem) {
     guard let model = StemModel(rawValue: sender.representedObject as? String ?? "") else { return }
     session.setModel(model)
