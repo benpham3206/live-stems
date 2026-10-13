@@ -252,7 +252,7 @@ final class Waterfall {
       float3 c = mix(float3(0.16, 0.34, 1.0), float3(0.55, 0.18, 1.0), smoothstep(0.30, 0.48, v));
       c = mix(c, hue, smoothstep(0.38, 0.62, v) * smoothstep(0.02, 0.14, rise));
       c = mix(c, float3(1.0, 0.97, 0.88), smoothstep(0.90, 1.0, v) * 0.5);
-      return c * (0.80 + 0.20 * smoothstep(0.3, 0.8, v)) * (1 - 0.30 * t);
+      return c * (0.80 + 0.20 * smoothstep(0.3, 0.8, v)) * (1 - 0.50 * t);  // half as bright at the back of the span
     }
     // The newest rows fade in from clear over the first fifth of the box: a soft front edge.
     static float emerge(float t) { return 0.05 + 0.95 * smoothstep(0.0, 0.2, t); }
