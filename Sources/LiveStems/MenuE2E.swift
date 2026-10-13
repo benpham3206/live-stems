@@ -293,8 +293,9 @@ enum MenuE2E {
     Visibility.reset()
     defer { Visibility.reset() }
     let toggles = controller.dockMenu().items
-    try require(toggles.map(\.title) == ["Show in Dock", "Show in Menu Bar", "Hide When Switching Apps"], "Visibility menu items changed")
-    try require(toggles.allSatisfy { controller.validateMenuItem($0) && $0.state == .on }, "All toggles start on and enabled")
+    try require(toggles.map(\.title) == ["Show in Dock", "Show in Menu Bar", "Hide When Switching Apps", "", "Model"], "Visibility menu items changed")
+    try require(toggles.last?.submenu?.items.count == StemModel.allCases.count, "Model menu lists every model")
+    try require(toggles.prefix(3).allSatisfy { controller.validateMenuItem($0) && $0.state == .on }, "All toggles start on and enabled")
     _ = NSApp.sendAction(toggles[0].action!, to: toggles[0].target, from: toggles[0])
     try require(!Visibility.dock && Visibility.menuBar, "Dock toggle did not hide the Dock icon")
     try require(!controller.validateMenuItem(toggles[1]), "Menu bar toggle stayed enabled with the Dock off")

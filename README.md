@@ -15,6 +15,7 @@ Live Stems sits in your menu bar. Its panel has:
 - an **All stems** row: **M** mutes everything, **S** lights up while anything is soloed (click it to
   clear every solo, like Logic),
 - **Reset**, which puts every control back to normal.
+- a **spectrum** button (next to Reset), which opens the Spectrum Analyzer.
 
 ## How it works
 
@@ -75,7 +76,7 @@ music.
   slower GPUs (M1, M2), switches to a lighter model that is a little less clean.
 - **Python 3.12**: the installer finds it, or installs it with Homebrew.
 - Apple's **Command Line Tools**, to build the app (`xcode-select --install` if you don't have them).
-- About **2 GB of disk space** for the model and its Python packages (the model download is about 1 GB),
+- About **1.5 GB of disk space** for the model and its Python packages (the download is about 0.6 GB),
   and about **1.5 GB of memory** while stems play (**under 1 GB** while the model sleeps).
 
 ## Install
@@ -88,12 +89,15 @@ curl -fsSL https://raw.githubusercontent.com/benpham3206/live-stems/main/install
 
 It takes a few minutes, mostly downloads, and it is safe to run again: finished steps are skipped,
 and running it later updates Live Stems. Add `-s -- --dry-run` after `zsh` to see the steps without
-running them. Here is what it does:
+running them. Add `-s -- --light` to download only the lighter model (84 MB instead of 420 MB); M1 and
+M2 Macs use that model anyway. Here is what it does:
 
 1. **Checks your Mac:** Apple Silicon, macOS 14.2 or newer, Apple's Command Line Tools.
 2. **Finds Python 3.12**, or installs it with Homebrew if you have Homebrew.
 3. **Downloads the source** to `~/LiveStems`.
-4. **Sets up the separation library and the model** in `~/LiveStems/work` (about 1.5 GB, once).
+4. **Sets up the separation library and the model** in `~/LiveStems/work` (about 0.6 GB to download,
+   once). The model comes ready for your GPU at half size, so no PyTorch and no conversion are needed.
+   If the download stops, run the install line again: it continues where it stopped.
 5. **Creates a signing certificate**, "Live Stems Local", in your login keychain. macOS remembers the
    audio permission only for an app with a stable signature, so this saves you from re-approving it
    after every update.
@@ -121,14 +125,23 @@ Every command below runs from `~/LiveStems`.
 
 ```sh
 python3.12 -m venv work/stems-venv
-work/stems-venv/bin/pip install "demucs-mlx[convert]==1.5.3"
-work/stems-venv/bin/python -m demucs_mlx.mlx_convert htdemucs_ft --output-dir work/model-cache
-work/stems-venv/bin/python -m demucs_mlx.mlx_convert htdemucs --output-dir work/model-cache
+work/stems-venv/bin/pip install "demucs-mlx==1.5.3"
+mkdir -p work/model-cache
+for m in htdemucs htdemucs_ft; do
+  curl -fL -C - --output-dir work/model-cache \
+    -O https://github.com/benpham3206/live-stems/releases/download/models-v1/$m.f16 \
+    -O https://github.com/benpham3206/live-stems/releases/download/models-v1/${m}_config.json
+done
+work/stems-venv/bin/python outputs/live-stems-source/script/models.py unpack work/model-cache htdemucs htdemucs_ft
 ```
 
-The last two commands download Meta's models and convert them for your GPU: `htdemucs_ft` (four
-fine-tuned models, one per stem; Live Stems runs three of them) and the lighter `htdemucs` (one
-model for all stems), which Live Stems uses on slower Macs.
+This downloads Meta's two models, already converted for your GPU: `htdemucs_ft` (four fine-tuned
+models, one per stem; Live Stems runs three of them) and the lighter `htdemucs` (one model for all
+stems), which Live Stems uses on slower Macs. The files are stored at half size; `unpack` restores
+the exact originals and checks each one against its digest.
+
+To convert the models yourself from Meta's checkpoints instead, install `"demucs-mlx[convert]==1.5.3"`
+(this adds PyTorch) and run `work/stems-venv/bin/python -m demucs_mlx.mlx_convert <model> --output-dir work/model-cache`.
 
 #### 3. Make a signing certificate (one time)
 
@@ -188,6 +201,13 @@ and switching headphones or speakers keeps Live Stems running.
   the same volume (untouched, all muted, or all at the same level), or when the music is paused. The
   status line tells you which: *Live stems*, *Original · model asleep*, *Muted · model asleep*.
 - **Reset** returns every control to normal and brings the stem splitter back if it stopped.
+- **Spectrum Analyzer** (the bars button): shows the sound Live Stems plays, as you hear it. Mute,
+  solo or move a fader and the spectrum changes with the sound. It waits for your output's delay,
+  so it stays in time on AirPods too. **3D** is a rolling waterfall with the newest moment in front;
+  **2D** is a spectrogram with time across. Choose log or linear frequency and a 2, 5 or 10 second span.
+- **Choose the model**: right-click **Stems** in the menu bar (or the Dock icon) and open **Model**.
+  *Automatic* uses the fine-tuned model and switches to the standard one if your GPU is too slow for it.
+  *Fine-tuned* is cleaner; *Standard* is lighter. The music keeps playing while the model reloads.
 - **Change the source** at any time in the source menu; Live Stems restarts on the new app.
 - **Quit Live Stems** resets the mix and hands the sound back to the app at the next pause or quiet
   moment, so your music never cuts out.
