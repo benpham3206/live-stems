@@ -242,11 +242,15 @@ enum SpectrumE2E {
     func scroll(_ lines: Int32) -> NSEvent {
       NSEvent(cgEvent: CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0)!)!
     }
-    // The frequency title stays upright all the way around.
+    // All the way around, the frequency title stays level and no two labels overlap.
     for step in 0..<36 {
       view.camera = Camera(yaw: Float(step) * .pi / 18, pitch: start.pitch)
-      guard let title = view.labels(in: view.bounds.size).first(where: { $0.text == "Frequency (Hz)" }), abs(title.angle) <= .pi / 2 else {
-        throw StemError("The frequency title reads upside down at yaw \(step * 10)°")
+      let labels = view.labels(in: view.bounds.size)
+      guard labels.contains(where: { $0.text == "Frequency (Hz)" && $0.angle == 0 }) else {
+        throw StemError("The frequency title is missing or tilted at yaw \(step * 10)°")
+      }
+      for (i, a) in labels.enumerated() where labels[(i + 1)...].contains(where: { $0.frame.intersects(a.frame) }) {
+        throw StemError("\"\(a.text)\" overlaps another label at yaw \(step * 10)°")
       }
     }
     view.camera = .reference

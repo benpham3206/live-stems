@@ -262,7 +262,15 @@ final class SpectrumView: NSView {
   /// Every label at this camera, in a view this size; none for a point behind the eye.
   func labels(in size: CGSize) -> [Label] {
     func at(_ f: CGFloat, _ t: CGFloat, _ v: CGFloat) -> CGPoint? { camera.point(SIMD3(Float(f), Float(t), Float(v)), in: size) }
-    guard let origin = at(0, 0, 0), let front = at(1, 0, 0), let top = at(0, 0, 1), let middle = at(1, 0.5, 0) else { return [] }
+    guard let origin = at(0, 0, 0), let front = at(1, 0, 0), let top = at(0, 0, 1), let middle = at(1, 0.5, 0), let centre = at(0.5, 0.5, 0.5) else { return [] }
+    // The frequency title lies level, beside the middle of its axis on the side away from the box.
+    let axis = CGPoint(x: (origin.x + front.x) / 2, y: (origin.y + front.y) / 2)
+    let away = CGVector(dx: axis.x - centre.x, dy: axis.y - centre.y), reach = max(1e-3, hypot(away.dx, away.dy))
+    let titles = [
+      Label(text: linearAmplitude ? "Amplitude" : "Amplitude (dB)", at: top + CGVector(dx: -63, dy: 53), size: 15, align: 0),
+      Label(text: "Frequency (Hz)", at: axis + CGVector(dx: away.dx / reach * 62, dy: away.dy / reach * 62), size: 17),
+      Label(text: "Time (s)", at: middle + CGVector(dx: 73, dy: -24), size: 16, align: 0),
+    ]
     var labels = levels.compactMap { db, text in at(0, 0, height(db)).map { Label(text: text, at: $0 - CGVector(dx: 15, dy: 0), size: 13, align: 1) } }
     let ticks: [(Float, String)] = [(20, "20"), (50, "50"), (100, "100"), (200, "200"), (500, "500"), (1000, "1k"), (2000, "2k"),
       (5000, "5k"), (10000, "10k"), (20000, "20k")]
@@ -272,14 +280,10 @@ final class SpectrumView: NSView {
     labels += (0...seconds).filter { seconds <= 5 || $0 % 2 == 0 }.compactMap { s in
       at(1, CGFloat(s) / CGFloat(seconds), 0).map { Label(text: "\(s)", at: $0 + CGVector(dx: 18, dy: -4), size: 14, align: 0) }
     }
-    // Along the frequency axis, turned half a circle when the axis points left, so the title never reads upside down.
-    let run = atan2(front.y - origin.y, front.x - origin.x), slant = abs(run) > .pi / 2 ? run - .pi * (run > 0 ? 1 : -1) : run
-    return labels + [
-      Label(text: linearAmplitude ? "Amplitude" : "Amplitude (dB)", at: top + CGVector(dx: -63, dy: 53), size: 15, align: 0),
-      Label(text: "Frequency (Hz)", at: CGPoint(x: origin.x + (front.x - origin.x) * 0.426, y: origin.y + (front.y - origin.y) * 0.426 - 65),
-        size: 17, angle: slant * 0.8),
-      Label(text: "Time (s)", at: middle + CGVector(dx: 73, dy: -24), size: 16, align: 0),
-    ]
+    // Seen edge on, an axis bunches its ticks: keep the titles, then each tick that clears all kept so far.
+    return (titles + labels).reduce(into: [Label]()) { kept, label in
+      if !kept.contains(where: { $0.frame.insetBy(dx: -2, dy: -1).intersects(label.frame) }) { kept.append(label) }
+    }
   }
 
   /// Axes with arrows and ticks, the labels, and the hint, over the rows.
