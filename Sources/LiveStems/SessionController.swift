@@ -26,6 +26,8 @@ final class SessionController {
   // 10 ms tick when no audio plays (before takeover, between sessions).
   private var activity: NSObjectProtocol?
   var onReady: (() -> Void)?
+  /// The model the worker loaded; Automatic reports its pick. On the main queue.
+  var onModel: ((StemModel) -> Void)?
   var onStatus: ((String, String, Bool, Bool) -> Void)?
   init(traceDirectory: URL = LocalSettings.evidence, spotifyState: SpotifyState = SpotifyState(),
     source: AudioSource = .saved) {
@@ -67,7 +69,7 @@ final class SessionController {
   private func startProcessor(token: UInt64) {
     busy = true
     self.status(audio == nil ? "\(source.name) · starting" : "Original · restarting processor")
-    let worker = WorkerClient()
+    let worker = WorkerClient(model: StemModel.saved)
     self.worker = worker
     worker.start { result in
       self.queue.async {
@@ -78,6 +80,8 @@ final class SessionController {
         do {
           try result.get()
           self.busy = false
+          let running = worker.runningModel
+          DispatchQueue.main.async { self.onModel?(running) }
           if let audio = self.audio {
             ls_stems(audio.core, self.stemsSelected ? 1 : 0)
             self.status(self.pipeline.map(self.mixStatus) ?? "Original mix")
@@ -316,6 +320,28 @@ final class SessionController {
       var peaks: [Float] = [0, 0, 0, 0]
       if let core = self.audio?.core { ls_take_meters(core, &peaks) }
       DispatchQueue.main.async { done(peaks) }
+    }
+  }
+  /// The newest `frames` of the mono mix as the speakers play it now; nil when no session runs.
+  func takeScope(frames: Int, _ done: @escaping ([Float]?) -> Void) {
+    queue.async {
+      var samples = [Float](repeating: 0, count: frames)
+      var result: [Float]?
+      if let audio = self.audio {
+        let delay = UInt32(max(0, audio.outputLatency) * 44100)
+        if ls_read_scope(audio.core, &samples, UInt32(frames), delay) > 0 { result = samples }
+      }
+      DispatchQueue.main.async { done(result) }
+    }
+  }
+  /// Restarts a running worker on the new model. Capture and playback keep going;
+  /// Original fades in while the model loads, as after Reset.
+  func setModel(_ value: StemModel) {
+    queue.async {
+      StemModel.saved = value
+      guard self.enabled, self.worker != nil, let audio = self.audio, let pipeline = self.pipeline else { return }
+      self.stopProcessor(audio, pipeline)
+      self.selectStems()
     }
   }
   private func mixStatus(_ pipeline: StemPipeline) -> String {

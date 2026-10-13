@@ -111,6 +111,8 @@ final class AudioSession {
   /// The capture rate follows the output device (44.1, 48, 24 kHz for AirPods
   /// with the mic on, ...). The converter and the core are built for `rate`.
   var captureRateChanged: Bool { (try? tapFormat().mSampleRate) != rate }
+  /// Seconds from render to speaker (AirPods add ~0.2 s), so a display can wait for the sound.
+  var outputLatency: Double { engine.outputNode.presentationLatency }
   /// AVAudioEngine stops itself when the output device's format changes.
   var outputStopped: Bool { !engine.isRunning }
   /// Many apps play audio from helper processes: browsers (com.google.Chrome.helper,

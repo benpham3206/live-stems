@@ -27,6 +27,8 @@ void ls_stems(LSCore * _Null_unspecified core, int enabled);
 void ls_controls(LSCore * _Null_unspecified core, const float * _Null_unspecified gains, uint32_t mute, uint32_t solo);
 // Takes and clears the four pre-fader stem peaks rendered since the last call.
 void ls_take_meters(LSCore * _Null_unspecified core, float * _Null_unspecified peaks);
+// Copies the n rendered mono mix frames that end `delay` frames before the newest. Returns 0 if not yet rendered.
+uint32_t ls_read_scope(LSCore * _Null_unspecified core, float * _Null_unspecified samples, uint32_t frames, uint32_t delay);
 uint64_t ls_played(LSCore * _Null_unspecified core);
 uint64_t ls_underruns(LSCore * _Null_unspecified core);
 uint64_t ls_overflows(LSCore * _Null_unspecified core);

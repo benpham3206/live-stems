@@ -6,7 +6,7 @@ set -euo pipefail
 package="$(cd "$(dirname "$0")/.." && pwd -P)"
 out="$(mktemp -d)"
 swift build -c release --package-path "$package"
-for stage in transitions flutter rest menu fader-redraw; do
+for stage in transitions flutter rest menu fader-redraw spectrum; do
   "$package/.build/release/LiveStems" --e2e "$stage" --output "$out/$stage"
 done
 echo "verify: ok ($out)"

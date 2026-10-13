@@ -97,7 +97,8 @@ final class ControlsPanel: NSView {
   static let size = NSSize(width: 360, height: 540)
   static let muteColor = NSColor.systemBlue
   static let soloColor = NSColor(srgbRed: 1, green: 0.82, blue: 0.2, alpha: 1)
-  let sourcePicker = NSPopUpButton(frame: NSRect(x: 14, y: 478, width: 236, height: 28), pullsDown: true)
+  let sourcePicker = NSPopUpButton(frame: NSRect(x: 14, y: 478, width: 196, height: 28), pullsDown: true)
+  let spectrumButton = NSButton(frame: NSRect(x: 214, y: 478, width: 36, height: 28))
   let resetButton = NSButton(title: "Reset", target: nil, action: nil)
   let statusLabel = NSTextField(labelWithString: ""), outputLabel = NSTextField(labelWithString: "")
   let muteAllButton = LogicToggle(letter: "M", lit: muteColor)
@@ -123,6 +124,12 @@ final class ControlsPanel: NSView {
       button.image = symbol([name])
       button.imagePosition = .imageLeading
     }
+    spectrumButton.bezelStyle = .push
+    spectrumButton.controlSize = .large
+    spectrumButton.image = symbol(["chart.bar.xaxis", "waveform"])
+    spectrumButton.imagePosition = .imageOnly
+    spectrumButton.toolTip = "Spectrum Analyzer"
+    spectrumButton.setAccessibilityLabel("Spectrum Analyzer")
     statusLabel.frame = NSRect(x: 16, y: 452, width: 328, height: 18)
     statusLabel.font = .systemFont(ofSize: 13, weight: .semibold)
     statusLabel.lineBreakMode = .byTruncatingTail
@@ -148,7 +155,7 @@ final class ControlsPanel: NSView {
     clearSoloButton.setAccessibilityLabel("Clear all solos")
     clearSoloButton.toolTip = "Clear all solos"
     for view in [allLabel, muteAllButton, clearSoloButton] { allRow.addSubview(view) }
-    for view in [sourcePicker, resetButton, statusLabel, headphones, outputLabel, allRow, quitButton] + strips as [NSView] {
+    for view in [sourcePicker, spectrumButton, resetButton, statusLabel, headphones, outputLabel, allRow, quitButton] + strips as [NSView] {
       addSubview(view)
     }
   }

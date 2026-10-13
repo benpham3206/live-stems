@@ -48,6 +48,28 @@ struct AudioSource: Equatable {
     }
   }
 }
+/// The separation network. Automatic starts fine-tuned and drops to Standard on GPUs too slow for it.
+enum StemModel: String, CaseIterable {
+  case automatic = "auto", fineTuned = "htdemucs_ft", standard = "htdemucs"
+  var title: String {
+    switch self {
+    case .automatic: "Automatic"
+    case .fineTuned: "Fine-tuned (htdemucs_ft) · cleaner"
+    case .standard: "Standard (htdemucs) · lighter"
+    }
+  }
+  /// Automatic uses whichever model is on disk.
+  var isDownloaded: Bool {
+    guard self != .automatic else { return Self.fineTuned.isDownloaded || Self.standard.isDownloaded }
+    return [".safetensors", "_config.json"].allSatisfy {
+      FileManager.default.fileExists(atPath: LocalSettings.cache.appendingPathComponent(rawValue + $0).path)
+    }
+  }
+  static var saved: StemModel {
+    get { StemModel(rawValue: UserDefaults.standard.string(forKey: "model") ?? "") ?? .automatic }
+    set { UserDefaults.standard.set(newValue.rawValue, forKey: "model") }
+  }
+}
 struct StemControls {
   var gains: [Float] = [1, 1, 1, 1]
   var mute: UInt32 = 0

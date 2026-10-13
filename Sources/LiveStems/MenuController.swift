@@ -35,9 +35,14 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     defer: false)
   private let windowLog = Logger(subsystem: "com.benpham.livestems", category: "Windowing")
   private let panel = ControlsPanel()
+  private lazy var spectrum = SpectrumWindowController { [weak self] done in
+    self?.session.takeScope(frames: SpectrumAnalyzer.size, done)
+  }
   private var sourcePicker: NSPopUpButton { panel.sourcePicker }
   private var active = false, panelRequested = true, controls = StemControls()
   private var meterTimer: Timer?
+  /// What the worker loaded last; Automatic's pick shows next to it in the Model menu.
+  private var runningModel: StemModel?
   override convenience init() {
     self.init(activateOnStatusClick: true)
   }
@@ -89,7 +94,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     sourcePicker.action = #selector(pickSource)
     panel.statusLabel.stringValue = "\(session.source.name) · direct"
     fillSources()
-    let actions: [(NSControl, Selector)] = [(panel.resetButton, #selector(resetButton)),
+    let actions: [(NSControl, Selector)] = [(panel.resetButton, #selector(resetButton)), (panel.spectrumButton, #selector(showSpectrum)),
       (panel.quitButton, #selector(quitApp)), (panel.muteAllButton, #selector(muteAll(_:))),
       (panel.clearSoloButton, #selector(clearSolos))]
     for (control, action) in actions {
@@ -113,6 +118,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       }
       self.presentWindow(reason: "readiness", userInitiated: false)
     }
+    session.onModel = { [weak self] in self?.runningModel = $0 }
     session.onStatus = { [weak self] text, output, enabled, stems in
       self?.applyStatus(text: text, output: output, enabled: enabled, stems: stems)
     }
@@ -307,7 +313,24 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       entry.target = self
       menu.addItem(entry)
     }
+    let models = NSMenu()
+    for model in StemModel.allCases {
+      let entry = NSMenuItem(title: model.title, action: #selector(pickModel(_:)), keyEquivalent: "")
+      entry.target = self
+      entry.representedObject = model.rawValue
+      models.addItem(entry)
+    }
+    let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+    modelItem.submenu = models
+    menu.addItem(.separator())
+    menu.addItem(modelItem)
     return menu
+  }
+  @objc private func showSpectrum() { spectrum.show() }
+  var e2eSpectrum: SpectrumWindowController { spectrum }
+  @objc private func pickModel(_ sender: NSMenuItem) {
+    guard let model = StemModel(rawValue: sender.representedObject as? String ?? "") else { return }
+    session.setModel(model)
   }
   /// The menu bar shown while the Dock icon is on; carries Cmd+W and Cmd+Q.
   private func appMenu() -> NSMenu {
@@ -331,6 +354,14 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   @objc private func toggleHideWhenInactive() { Visibility.hideWhenInactive.toggle() }
   func validateMenuItem(_ entry: NSMenuItem) -> Bool {
     switch entry.action {
+    case #selector(pickModel(_:)):
+      let model = StemModel(rawValue: entry.representedObject as? String ?? "") ?? .automatic
+      entry.state = model == StemModel.saved ? .on : .off
+      var title = model.title
+      if model == .automatic, let runningModel { title += " · using " + (runningModel == .standard ? "Standard" : "Fine-tuned") }
+      if !model.isDownloaded { title += " · not downloaded" }
+      entry.title = title
+      return model.isDownloaded
     case #selector(toggleHideWhenInactive):
       entry.state = Visibility.hideWhenInactive ? .on : .off
       return true
