@@ -272,7 +272,8 @@ final class SpectrumView: NSView {
     labels += (0...seconds).filter { seconds <= 5 || $0 % 2 == 0 }.compactMap { s in
       at(1, CGFloat(s) / CGFloat(seconds), 0).map { Label(text: "\(s)", at: $0 + CGVector(dx: 18, dy: -4), size: 14, align: 0) }
     }
-    let slant = atan2(front.y - origin.y, front.x - origin.x)
+    // Along the frequency axis, turned half a circle when the axis points left, so the title never reads upside down.
+    let run = atan2(front.y - origin.y, front.x - origin.x), slant = abs(run) > .pi / 2 ? run - .pi * (run > 0 ? 1 : -1) : run
     return labels + [
       Label(text: linearAmplitude ? "Amplitude" : "Amplitude (dB)", at: top + CGVector(dx: -63, dy: 53), size: 15, align: 0),
       Label(text: "Frequency (Hz)", at: CGPoint(x: origin.x + (front.x - origin.x) * 0.426, y: origin.y + (front.y - origin.y) * 0.426 - 65),

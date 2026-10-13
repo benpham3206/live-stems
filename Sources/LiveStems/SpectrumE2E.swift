@@ -242,6 +242,13 @@ enum SpectrumE2E {
     func scroll(_ lines: Int32) -> NSEvent {
       NSEvent(cgEvent: CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0)!)!
     }
+    // The frequency title stays upright all the way around.
+    for step in 0..<36 {
+      view.camera = Camera(yaw: Float(step) * .pi / 18, pitch: start.pitch)
+      guard let title = view.labels(in: view.bounds.size).first(where: { $0.text == "Frequency (Hz)" }), abs(title.angle) <= .pi / 2 else {
+        throw StemError("The frequency title reads upside down at yaw \(step * 10)°")
+      }
+    }
     view.camera = .reference
     view.scrollWheel(with: scroll(3))
     guard view.camera.zoom > 1.2, view.camera.yaw == start.yaw else { throw StemError("Scrolling up did not zoom in: \(view.camera)") }
