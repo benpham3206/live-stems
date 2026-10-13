@@ -290,9 +290,9 @@ final class Waterfall {
         out.across = sheetTops[corner];
         out.width = -1;
       }
-      // Down to a quarter of its light at the back of the span. On the fade, not the colour, so rows
+      // Down to a fifth of its light at the back of the span. On the fade, not the colour, so rows
       // stacked edge on stop adding up to white and the dimming shows.
-      out.fade = emerge(t) * (1 - 0.75 * t);
+      out.fade = emerge(t) * (1 - 0.80 * t);
       return out;
     }
     fragment float4 rowLight(Lit in [[stage_in]], constant Frame &f [[buffer(0)]]) {

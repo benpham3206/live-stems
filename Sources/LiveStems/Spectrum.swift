@@ -271,7 +271,9 @@ final class SpectrumView: NSView {
     // the axis lies, so turning the view moves the title smoothly, never in a jump.
     func title(_ text: String, _ from: CGPoint, _ to: CGPoint, size: CGFloat) -> Label {
       // An axis seen end on, short on screen, counts as standing up: its direction there means nothing.
-      let run = max(1e-3, hypot(to.x - from.x, to.y - from.y)), flat = abs(to.x - from.x) / run, level = flat * min(1, run / 120)
+      // It stays under the middle until the axis stands within about 33 degrees of upright, then slides.
+      let run = max(1e-3, hypot(to.x - from.x, to.y - from.y))
+      let flat = min(1, max(0, (abs(to.x - from.x) / run - 0.05) / 0.5)), level = flat * min(1, run / 120)
       var out = CGVector(dx: (from.y - to.y) / run, dy: (to.x - from.x) / run)
       if out.dy > 0 { out = CGVector(dx: -out.dx, dy: -out.dy) }
       let low = from.y < to.y ? from : to, mid = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2)
