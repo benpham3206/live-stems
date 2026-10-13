@@ -7,9 +7,10 @@ func symbol(_ names: [String]) -> NSImage {
 
 /// A faint rounded tray that groups controls on the glass.
 class Backdrop: NSView {
+  var radius: CGFloat = 10, fill = NSColor.labelColor.withAlphaComponent(0.05)
   override func draw(_ dirtyRect: NSRect) {
-    let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
-    NSColor.labelColor.withAlphaComponent(0.05).setFill()
+    let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+    fill.setFill()
     shape.fill()
     NSColor.labelColor.withAlphaComponent(0.09).setStroke()
     shape.stroke()
