@@ -264,9 +264,13 @@ enum SpectrumE2E {
     for step in 0..<36 {
       view.camera = Camera(yaw: Float(step) * .pi / 18, pitch: start.pitch)
       let labels = view.labels(in: view.bounds.size)
-      guard labels.contains(where: { $0.text == "Frequency (Hz)" && $0.angle == 0 }) else {
+      guard let title = labels.first(where: { $0.text == "Frequency (Hz)" && $0.angle == 0 }),
+        let a = view.camera.point([0, 0, 0], in: view.bounds.size), let b = view.camera.point([1, 0, 0], in: view.bounds.size) else {
         throw StemError("The frequency title is missing or tilted at yaw \(step * 10)°")
       }
+      // Underneath its axis, unless the axis stands nearly upright on screen.
+      let upright = abs(b.y - a.y) > 2 * abs(b.x - a.x)
+      guard upright || title.at.y < (a.y + b.y) / 2 else { throw StemError("The frequency title sits above its axis at yaw \(step * 10)°") }
       for (i, a) in labels.enumerated() where labels[(i + 1)...].contains(where: { $0.frame.intersects(a.frame) }) {
         throw StemError("\"\(a.text)\" overlaps another label at yaw \(step * 10)°")
       }

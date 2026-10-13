@@ -266,11 +266,13 @@ final class SpectrumView: NSView {
   func labels(in size: CGSize) -> [Label] {
     func at(_ f: CGFloat, _ t: CGFloat, _ v: CGFloat) -> CGPoint? { camera.point(SIMD3(Float(f), Float(t), Float(v)), in: size) }
     guard let origin = at(0, 0, 0), let front = at(1, 0, 0), let top = at(0, 0, 1), let back = at(1, 1, 0), let centre = at(0.5, 0.5, 0.5) else { return [] }
-    // An axis title lies level, centred on its axis: out from the middle at right angles, away from the box.
+    // An axis title lies level, centred on its axis: out from the middle at right angles, underneath it;
+    // away from the box when the axis stands nearly upright and has no underneath.
     func title(_ text: String, _ from: CGPoint, _ to: CGPoint, size: CGFloat) -> Label {
       let mid = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2), run = max(1e-3, hypot(to.x - from.x, to.y - from.y))
       var out = CGVector(dx: (from.y - to.y) / run, dy: (to.x - from.x) / run)
-      if out.dx * (mid.x - centre.x) + out.dy * (mid.y - centre.y) < 0 { out = CGVector(dx: -out.dx, dy: -out.dy) }
+      let flip = abs(out.dy) > 0.3 ? out.dy > 0 : out.dx * (mid.x - centre.x) + out.dy * (mid.y - centre.y) < 0
+      if flip { out = CGVector(dx: -out.dx, dy: -out.dy) }
       return Label(text: text, at: mid + CGVector(dx: out.dx * 58, dy: out.dy * 58), size: size)
     }
     let titles = [
