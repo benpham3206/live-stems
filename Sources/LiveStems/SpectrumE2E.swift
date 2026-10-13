@@ -260,7 +260,18 @@ enum SpectrumE2E {
     func scroll(_ lines: Int32) -> NSEvent {
       NSEvent(cgEvent: CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0)!)!
     }
-    // All the way around, the frequency title stays level and no two labels overlap.
+    // All the way around, the frequency title stays level, moves smoothly (a flip moves it about 100 pt),
+    // and no two labels overlap.
+    for pitch in [start.pitch, 0.05, -0.4] {  // the reference, nearly side on, and from below
+      var last: CGPoint?
+      for degree in 0..<360 {
+        view.camera = Camera(yaw: Float(degree) * .pi / 180, pitch: pitch)
+        if let at = view.labels(in: view.bounds.size).first(where: { $0.text == "Frequency (Hz)" })?.at {
+          if let last, hypot(at.x - last.x, at.y - last.y) > 30 { throw StemError("The frequency title jumped at yaw \(degree)°") }
+          last = at
+        }
+      }
+    }
     for step in 0..<36 {
       view.camera = Camera(yaw: Float(step) * .pi / 18, pitch: start.pitch)
       let labels = view.labels(in: view.bounds.size)
