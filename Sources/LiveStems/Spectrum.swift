@@ -7,7 +7,7 @@ final class SpectrumView: NSView {
   static let rowsPerSecond = 30
   // MiniMeters' spectrum settings: a 4.8 dB/octave tilt around 1 kHz and a 60 dB window centred on -50 dB.
   static let tilt: Float = 4.8, top: Float = -20, bottom: Float = -80
-  var threeD = true { didSet { mesh.isHidden = !threeD; overlay.isHidden = !threeD; needsDisplay = true } }
+  var threeD = true { didSet { mesh.isHidden = !threeD; overlay.isHidden = !threeD; needsDisplay = true; redraw() } }
   var logFrequency = true {
     didSet { history.removeAll(); lastRow = nil; waterfall?.clear(); heard = []; original = []; settingsChanged() }
   }
@@ -39,11 +39,14 @@ final class SpectrumView: NSView {
     heard = smooth(heard, mix)
     original = smooth(original, song)
     rowsPushed += 1
-    if threeD { mesh.needsDisplay = true } else { needsDisplay = true }
+    if threeD { redraw() } else { needsDisplay = true }
   }
   /// Rows taken so far, and whether a redraw waits: for the checks.
-  private(set) var rowsPushed = 0
-  var redrawPending: Bool { needsDisplay || mesh.needsDisplay || overlay.needsDisplay }
+  private(set) var rowsPushed = 0, framesDrawn = 0
+  var redrawPending: Bool { needsDisplay || overlay.needsDisplay }
+  /// Draws the 3D rows now. A needsDisplay-driven MTKView stopped drawing once its window closed and
+  /// opened again (checked), so it draws only when told.
+  func redraw() { if threeD, window?.isVisible == true { mesh.draw() } }
   private func trim() {
     let keep = seconds * Self.rowsPerSecond
     if history.count > keep { history.removeFirst(history.count - keep) }
@@ -135,7 +138,7 @@ final class SpectrumView: NSView {
     }
   }()
   private let mesh = MTKView(), overlay = Overlay()
-  var camera = Camera.reference { didSet { waterfall?.camera = camera; overlay.needsDisplay = true; mesh.needsDisplay = true } }
+  var camera = Camera.reference { didSet { waterfall?.camera = camera; overlay.needsDisplay = true; redraw() } }
   private var turning: NSPoint?
 
   override init(frame: NSRect) {
@@ -144,7 +147,7 @@ final class SpectrumView: NSView {
     mesh.delegate = self
     // Drawn on demand: after a new row or a turn, never on a timer.
     mesh.isPaused = true
-    mesh.enableSetNeedsDisplay = true
+    mesh.enableSetNeedsDisplay = false
     mesh.colorPixelFormat = .bgra8Unorm
     mesh.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
     mesh.layer?.isOpaque = false
@@ -181,7 +184,7 @@ final class SpectrumView: NSView {
     }
     waterfall?.grid = grid + [line([1, 1, 0], [1, 1, 1], 0.16, 1)]
     overlay.needsDisplay = true
-    if threeD { mesh.needsDisplay = true } else { needsDisplay = true }
+    if threeD { redraw() } else { needsDisplay = true }
   }
 
   override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
@@ -262,14 +265,18 @@ final class SpectrumView: NSView {
   /// Every label at this camera, in a view this size; none for a point behind the eye.
   func labels(in size: CGSize) -> [Label] {
     func at(_ f: CGFloat, _ t: CGFloat, _ v: CGFloat) -> CGPoint? { camera.point(SIMD3(Float(f), Float(t), Float(v)), in: size) }
-    guard let origin = at(0, 0, 0), let front = at(1, 0, 0), let top = at(0, 0, 1), let middle = at(1, 0.5, 0), let centre = at(0.5, 0.5, 0.5) else { return [] }
-    // The frequency title lies level, beside the middle of its axis on the side away from the box.
-    let axis = CGPoint(x: (origin.x + front.x) / 2, y: (origin.y + front.y) / 2)
-    let away = CGVector(dx: axis.x - centre.x, dy: axis.y - centre.y), reach = max(1e-3, hypot(away.dx, away.dy))
+    guard let origin = at(0, 0, 0), let front = at(1, 0, 0), let top = at(0, 0, 1), let back = at(1, 1, 0), let centre = at(0.5, 0.5, 0.5) else { return [] }
+    // An axis title lies level, centred on its axis: out from the middle at right angles, away from the box.
+    func title(_ text: String, _ from: CGPoint, _ to: CGPoint, size: CGFloat) -> Label {
+      let mid = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2), run = max(1e-3, hypot(to.x - from.x, to.y - from.y))
+      var out = CGVector(dx: (from.y - to.y) / run, dy: (to.x - from.x) / run)
+      if out.dx * (mid.x - centre.x) + out.dy * (mid.y - centre.y) < 0 { out = CGVector(dx: -out.dx, dy: -out.dy) }
+      return Label(text: text, at: mid + CGVector(dx: out.dx * 58, dy: out.dy * 58), size: size)
+    }
     let titles = [
       Label(text: linearAmplitude ? "Amplitude" : "Amplitude (dB)", at: top + CGVector(dx: -63, dy: 53), size: 15, align: 0),
-      Label(text: "Frequency (Hz)", at: axis + CGVector(dx: away.dx / reach * 62, dy: away.dy / reach * 62), size: 17),
-      Label(text: "Time (s)", at: middle + CGVector(dx: 73, dy: -24), size: 16, align: 0),
+      title("Frequency (Hz)", origin, front, size: 17),
+      title("Time (s)", front, back, size: 16),
     ]
     var labels = levels.compactMap { db, text in at(0, 0, height(db)).map { Label(text: text, at: $0 - CGVector(dx: 15, dy: 0), size: 13, align: 1) } }
     let ticks: [(Float, String)] = [(20, "20"), (50, "50"), (100, "100"), (200, "200"), (500, "500"), (1000, "1k"), (2000, "2k"),
@@ -360,8 +367,8 @@ final class SpectrumView: NSView {
 }
 
 extension SpectrumView: MTKViewDelegate {
-  func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
-  func draw(in view: MTKView) { waterfall?.draw(in: view) }
+  func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { DispatchQueue.main.async { self.redraw() } }
+  func draw(in view: MTKView) { framesDrawn += 1; waterfall?.draw(in: view) }
 }
 
 /// A transparent view that draws what it is given: the 3D view's axes and labels, over its rows.

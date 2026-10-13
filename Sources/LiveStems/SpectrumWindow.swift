@@ -155,6 +155,7 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
   func show() {
     if !window.isVisible { window.center() }
     window.makeKeyAndOrderFront(nil)
+    view.redraw()  // the last rows, even while silence holds them
     guard timer == nil else { return }
     // 30 rows a second while open; nothing runs while closed.
     timer = Timer(timeInterval: 1.0 / Double(SpectrumView.rowsPerSecond), repeats: true) { [weak self] _ in self?.tick() }

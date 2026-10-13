@@ -143,6 +143,7 @@ enum SpectrumE2E {
     try orbit(view, out: out)
     try pause(controller)
     try labelsInside(controller)
+    try reopen()
     // A row and a frame must fit well inside the 33 ms row period.
     guard timings["push"]! + timings["3d"]! < 0.020, timings["2d"]! < 0.020 else { throw StemError("Spectrum draw too slow: \(timings)") }
     let ms = timings.mapValues { String(format: "%.1f", $0 * 1000) }
@@ -184,6 +185,23 @@ enum SpectrumE2E {
     }
   }
 
+  /// Closing the window and opening it again keeps the rows coming, from the window's own timer.
+  private static func reopen() throws {
+    let mix = (0..<SpectrumAnalyzer.size).map { 0.1 * sin(Float($0) * 0.1) }
+    let controller = SpectrumWindowController { $0(Scope(mix: mix, original: mix, rate: 44100)) }
+    func rows(after seconds: TimeInterval) -> (rows: Int, frames: Int) {
+      let before = (controller.view.rowsPushed, controller.view.framesDrawn)
+      RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds))
+      return (controller.view.rowsPushed - before.0, controller.view.framesDrawn - before.1)
+    }
+    controller.show()
+    let first = rows(after: 0.3)
+    controller.window.performClose(nil)
+    controller.show()
+    let second = rows(after: 0.3)
+    controller.window.close()
+    guard first.rows > 3, second.rows > 3, first.frames > 3, second.frames > 3 else { throw StemError("Rows stopped after the window reopened: \(first) then \(second)") }
+  }
   /// Silence and no session add no rows and leave nothing to redraw; sound starts it again.
   private static func pause(_ controller: SpectrumWindowController) throws {
     let rate: Float = 44100, view = controller.view
@@ -195,11 +213,11 @@ enum SpectrumE2E {
     }
     guard controller.feed(scope(silentFor: 0.1)) else { throw StemError("100 ms of silence paused the view") }
     view.window?.displayIfNeeded()
-    let rows = view.rowsPushed
+    let rows = view.rowsPushed, frames = view.framesDrawn
     for _ in 0..<(SpectrumView.rowsPerSecond) {  // a second of silence, then of no session
       guard !controller.feed(scope(silentFor: 0.16)) else { throw StemError("Silence added a row") }
     }
-    guard view.rowsPushed == rows, !view.redrawPending else { throw StemError("The view drew during silence") }
+    guard view.rowsPushed == rows, view.framesDrawn == frames, !view.redrawPending else { throw StemError("The view drew during silence") }
     guard !controller.feed(nil), view.rowsPushed == rows, view.hint != nil else { throw StemError("No session added a row") }
     guard controller.feed(scope(silentFor: 0)), view.rowsPushed == rows + 1 else { throw StemError("Sound did not start the view again") }
   }
