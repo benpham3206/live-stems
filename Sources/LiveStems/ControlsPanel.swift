@@ -23,7 +23,7 @@ final class ChannelStrip: Backdrop {
   static let size = NSSize(width: 80, height: 316)
   let name: String, color: NSColor, icon: NSImage
   let waveform: StemWaveform, meter: LevelMeter
-  let fader = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
+  let fader = Fader(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
   let mute = LogicToggle(letter: "M", lit: ControlsPanel.muteColor)
   let solo = LogicToggle(letter: "S", lit: ControlsPanel.soloColor)
   /// A silent strip (muted, or not soloed while another is) fades; a soloed one glows in its color.
