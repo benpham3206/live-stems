@@ -20,6 +20,9 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     self.settingsMenu = settingsMenu
     super.init()
     window.title = "Spectrum Analyzer"
+    if let saved = UserDefaults.standard.object(forKey: Self.glowKey) as? Int, Tuning.glowLooks.indices.contains(saved) {
+      view.glowLook = saved
+    }
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
     window.isMovableByWindowBackground = true
@@ -192,8 +195,24 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
   }
   @objc private func changeAmplitude() { view.linearAmplitude = choice(amplitude) == 1 }
   @objc private func openSettings() {
-    settingsMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: settings.bounds.maxY + 4), in: settings)
+    // The model choice, then the glow curves to compare.
+    let menu = settingsMenu()
+    menu.addItem(.separator())
+    menu.addItem(.sectionHeader(title: "Glow"))
+    for (i, look) in Tuning.glowLooks.enumerated() {
+      let item = NSMenuItem(title: look.name, action: #selector(pickGlow(_:)), keyEquivalent: "")
+      item.target = self
+      item.tag = i
+      item.state = i == view.glowLook ? .on : .off
+      menu.addItem(item)
+    }
+    menu.popUp(positioning: nil, at: NSPoint(x: 0, y: settings.bounds.maxY + 4), in: settings)
   }
+  @objc private func pickGlow(_ item: NSMenuItem) {
+    view.glowLook = item.tag
+    UserDefaults.standard.set(item.tag, forKey: Self.glowKey)
+  }
+  private static let glowKey = "SpectrumGlowLook"
   @objc private func changeScale() { view.logFrequency = choice(scale) == 0 }
   @objc private func changeSpan() { view.seconds = [2, 5, 10][choice(span)] }
 }

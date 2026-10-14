@@ -13,6 +13,8 @@ final class SpectrumView: NSView {
   }
   var seconds = 5 { didSet { trim(); settingsChanged() } }
   var linearAmplitude = false { didSet { settingsChanged() } }
+  /// Which of `Tuning.glowLooks` the 3D glow follows.
+  var glowLook = Tuning.glowLook { didSet { waterfall?.glowLook = glowLook; redraw() } }
   var hint: String? { didSet { if oldValue != hint { needsDisplay = true; overlay.needsDisplay = true } } }
   /// Tilted band levels of the mix, oldest first, for the spectrogram.
   private(set) var history = [[Float]]()

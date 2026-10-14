@@ -75,6 +75,17 @@ final class Waterfall {
   }
   /// Matches `Frame` in the shader.
   private struct Frame {
+    init(clip: simd_float4x4, pixels: SIMD2<Float>, scale: Float, bands: UInt32, capacity: UInt32, newest: UInt32, full: UInt32,
+      linear: UInt32, ground: Float, steep: Float, every: UInt32, curve: Tuning.GlowCurve, seconds: Int) {
+      (self.clip, self.pixels, self.scale, self.bands, self.capacity, self.newest, self.full, self.linear, self.ground, self.steep, self.every)
+        = (clip, pixels, scale, bands, capacity, newest, full, linear, ground, steep, every)
+      switch curve {
+      case .exponential(let rate): (glowShape, glowRate, glowEnd) = (0, rate[seconds] ?? 2.3, 0)
+      case .straight(let end): (glowShape, glowRate, glowEnd) = (1, 0, end[seconds] ?? 0.5)
+      case .scaledExponential(let k, let end): (glowShape, glowRate, glowEnd) = (2, k, end[seconds] ?? 0.34)
+      case .inverse(let end): (glowShape, glowRate, glowEnd) = (3, 0, end[seconds] ?? 0.11)
+      }
+    }
     var clip: simd_float4x4
     var pixels: SIMD2<Float>
     var scale: Float
@@ -82,9 +93,9 @@ final class Waterfall {
     var ground: Float
     /// 0 from the side, rising to 1 looking straight down or up: how much the flat ribbons show.
     var steep: Float
-    /// `Tuning.lineEvery` and `Tuning.glowEnd` for the span.
+    /// `Tuning.lineEvery` for the span, and the glow curve: `glow` in the shader.
     var every: UInt32
-    var glowEnd: Float
+    var glowShape: UInt32, glowRate: Float, glowEnd: Float
   }
   /// Ten seconds of rows and one spare, so the row being replaced is never one being drawn.
   // ceiling: 10 s at 30 rows/s; a longer span needs a bigger ring (1.6 kB a row).
@@ -96,7 +107,7 @@ final class Waterfall {
   private var hueBuffer: MTLBuffer?, gridBuffer: MTLBuffer?, gridCount = 0
   private var scene: MTLTexture?, glow: MTLTexture?, blur: MPSImageGaussianBlur?
   private var newest = 0, count = 0, pushed = 0
-  var camera = Camera.reference, seconds = 5, linear = false
+  var camera = Camera.reference, seconds = 5, linear = false, glowLook = Tuning.glowLook
 
   init() throws {
     guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw StemError("No Metal device") }
@@ -195,7 +206,7 @@ final class Waterfall {
     rows.withUnsafeBytes { if $0.count > 0 { order.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
     var frame = Frame(clip: camera.clip(width: Float(width), height: Float(height), scale: scale), pixels: [Float(width), Float(height)], scale: scale,
       bands: UInt32(SpectrumAnalyzer.bands), capacity: UInt32(Self.capacity), newest: UInt32(newest), full: UInt32(full),
-      linear: linear ? 1 : 0, ground: eye.z < 0 ? 0.06 : 0.25, steep: Self.steepness(camera.pitch), every: UInt32(every), glowEnd: Tuning.glowEnd[seconds] ?? 0.5)
+      linear: linear ? 1 : 0, ground: eye.z < 0 ? 0.06 : 0.25, steep: Self.steepness(camera.pitch), every: UInt32(every), curve: Tuning.glowLooks[glowLook].curve, seconds: seconds)
     let pass = MTLRenderPassDescriptor()
     pass.colorAttachments[0].texture = scene
     pass.colorAttachments[0].loadAction = .clear
@@ -245,7 +256,7 @@ final class Waterfall {
   private static let shader = """
     #include <metal_stdlib>
     using namespace metal;
-    struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, full, linear; float ground, steep; uint every; float glowEnd; };
+    struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, full, linear; float ground, steep; uint every; uint glowShape; float glowRate, glowEnd; };
     struct Lit { float4 position [[position]]; float4 color; float across; float width; float fade; float fog; float cover; };
     constant uint sheetEnds[6] = {0, 0, 1, 1, 0, 1};
     constant float sheetTops[6] = {1, 0, 1, 1, 0, 0};
@@ -268,6 +279,16 @@ final class Waterfall {
       return c * (0.80 + 0.20 * smoothstep(0.3, 0.8, v));
     }
     // The newest rows fade in over their first `Tuning.emergeRows` rows: a soft front edge that keeps up with the 2D view.
+    // The glow at depth t, 0 front to 1 back: shape 0 e^(−rate·t), 1 straight to end, 2 exponential of
+    // rate k scaled to end, 3 1 / (1 + a·t) to end. As `Tuning.GlowCurve`.
+    static float glow(constant Frame &f, float t) {
+      switch (f.glowShape) {
+        case 0: return exp(-f.glowRate * t);
+        case 1: return mix(1.0, f.glowEnd, t);
+        case 2: return mix(1.0, f.glowEnd, (1 - exp(-f.glowRate * t)) / (1 - exp(-f.glowRate)));
+        default: return 1 / (1 + (1 / f.glowEnd - 1) * t);
+      }
+    }
     static float emerge(uint age) { return smoothstep(-1.0, \(Tuning.emergeRows), float(age)); }
     // A point pushed sideways from the line a to b by this many pixels, in clip space.
     static float4 widen(constant Frame &f, float4 a, float4 b, bool end, float pixels) {
@@ -310,11 +331,11 @@ final class Waterfall {
         out.across = sheetTops[corner];
         out.width = -1;
       }
-      // Light falls as 1 / (1 + a·t) to `glowEnd` at the back of the span; the fog by the same share
+      // Light falls along the chosen glow curve (`glow`); the fog by the same share
       // each second, to `Tuning.fogEnd`. Cover does
       // not: rows stacked edge on settle at their light over their cover, so a fade on both
       // cancels and the stack stays at full until the last few rows.
-      out.fade = emerge(age) / (1 + (1 / f.glowEnd - 1) * t);
+      out.fade = emerge(age) * glow(f, t);
       out.fog = sqrt(emerge(age)) * pow(\(Tuning.fogEnd), t);
       out.cover = emerge(age);
       return out;
