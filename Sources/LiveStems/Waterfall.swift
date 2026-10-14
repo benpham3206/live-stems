@@ -80,6 +80,8 @@ final class Waterfall {
     var scale: Float
     var bands, capacity, newest, full, linear: UInt32
     var ground: Float
+    /// 0 from the side, rising to 1 looking straight down or up: how much the flat ribbons show.
+    var steep: Float
   }
   /// Ten seconds of rows and one spare, so the row being replaced is never one being drawn.
   // ceiling: 10 s at 30 rows/s; a longer span needs a bigger ring (1.6 kB a row).
@@ -190,7 +192,7 @@ final class Waterfall {
     rows.withUnsafeBytes { if $0.count > 0 { order.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
     var frame = Frame(clip: camera.clip(width: Float(width), height: Float(height), scale: scale), pixels: [Float(width), Float(height)], scale: scale,
       bands: UInt32(SpectrumAnalyzer.bands), capacity: UInt32(Self.capacity), newest: UInt32(newest), full: UInt32(full),
-      linear: linear ? 1 : 0, ground: eye.z < 0 ? 0.06 : 0.25)
+      linear: linear ? 1 : 0, ground: eye.z < 0 ? 0.06 : 0.25, steep: Self.steepness(camera.pitch))
     let pass = MTLRenderPassDescriptor()
     pass.colorAttachments[0].texture = scene
     pass.colorAttachments[0].loadAction = .clear
@@ -215,7 +217,7 @@ final class Waterfall {
       encoder.setVertexBuffer(ring, offset: 0, index: 1)
       encoder.setVertexBuffer(hueBuffer, offset: 0, index: 2)
       encoder.setVertexBuffer(order, offset: 0, index: 3)
-      encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: (SpectrumAnalyzer.bands - 1) * 12, instanceCount: rows.count)
+      encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: (SpectrumAnalyzer.bands - 1) * 18, instanceCount: rows.count)
     }
     if eye.z < 0 { ground() }
     encoder.endEncoding()
@@ -229,10 +231,17 @@ final class Waterfall {
     encoder.endEncoding()
   }
 
+  /// From the side the rows show their veils and lines; looking down or up those are edge on, so flat
+  /// ribbons take over, none at the reference's 20°, all from 70°.
+  static func steepness(_ pitch: Float) -> Float {
+    let x = min(1, max(0, (abs(sin(pitch)) - 0.5) / 0.44))
+    return x * x * (3 - 2 * x)
+  }
+
   private static let shader = """
     #include <metal_stdlib>
     using namespace metal;
-    struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, full, linear; float ground; };
+    struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, full, linear; float ground, steep; };
     struct Lit { float4 position [[position]]; float4 color; float across; float width; float fade; float cover; };
     constant uint sheetEnds[6] = {0, 0, 1, 1, 0, 1};
     constant float sheetTops[6] = {1, 0, 1, 1, 0, 0};
@@ -265,19 +274,26 @@ final class Waterfall {
       return p;
     }
 
-    // Each row: a veil from the floor up to the levels, then a hairline along them.
+    // Each row: a veil from the floor up to the levels, a hairline along them, and a flat ribbon at
+    // the levels back to the next row drawn, seen only from above or below.
     vertex Lit row(uint id [[vertex_id]], uint instance [[instance_id]], constant Frame &f [[buffer(0)]],
       const device float *ring [[buffer(1)]], const device float4 *hues [[buffer(2)]], const device uint *order [[buffer(3)]]) {
       uint index = order[instance], age = (f.newest + f.capacity - index) % f.capacity, sheet = (f.bands - 1) * 6;
       const device float *levels = ring + index * f.bands;
       float t = float(age) / max(1.0, float(f.full - 1));
-      bool line = id >= sheet;
+      bool line = id >= sheet && id < 2 * sheet, ribbon = id >= 2 * sheet;
       uint corner = id % 6, i = (id % sheet) / 6, at = i + (line ? lineEnds[corner] : sheetEnds[corner]);
       float va = height(levels[i], f.linear), vb = height(levels[i + 1], f.linear), v = height(levels[at], f.linear);
       float xa = float(i) / (f.bands - 1), xb = float(i + 1) / (f.bands - 1);
       Lit out;
       out.color = float4(shade(v, prominence(levels, f.bands, at, v, f.linear), hues[at].rgb), v);
-      if (line) {
+      if (ribbon) {
+        // Two rows deep, as the rows drawn are every other one: the ribbons tile into a spectrogram.
+        float back = min(1.0, t + sheetTops[corner] * 2 / max(1.0, float(f.full - 1)));
+        out.position = f.clip * float4(float(at) / (f.bands - 1), back, v, 1);
+        out.across = 0;
+        out.width = -2;
+      } else if (line) {
         float4 a = f.clip * float4(xa, t, va, 1), b = f.clip * float4(xb, t, vb, 1);
         // Out to the edge of the halo, wider where loud; the glow's strength rides in alpha.
         float loud = max(va, vb);
@@ -299,6 +315,11 @@ final class Waterfall {
     }
     fragment float4 rowLight(Lit in [[stage_in]], constant Frame &f [[buffer(0)]]) {
       float v = in.color.a;
+      if (in.width < -1.5) {
+        // The ribbon: the row's colour where loud, over navy fog that thins with age, as the veils.
+        float lit = f.steep * 0.55 * smoothstep(0.15, 0.85, v), fog = f.steep * (0.05 + 0.12 * smoothstep(0.0, 0.3, v)) * sqrt(in.fade);
+        return float4(in.color.rgb * lit * 1.2 * in.fade + float3(0.03, 0.07, 0.30) * fog, (0.6 * lit + fog) * in.cover);
+      }
       if (in.width < 0) {
         // A veil over the rows behind, lit just under its top where loud: the peaks glow from within.
         float below = (1 - in.across) * v, light = smoothstep(0.25, 0.95, v) * exp(-below / 0.08);

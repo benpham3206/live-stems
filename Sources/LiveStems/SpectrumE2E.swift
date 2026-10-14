@@ -285,7 +285,7 @@ enum SpectrumE2E {
   }
 
   /// A right-drag turns the 3D view and stops looking straight down or up; a left-drag and a
-  /// right-click leave it; a double-click puts it back. Writes the view from below.
+  /// right-click leave it; a double-click puts it back. Writes the view from below, over and under.
   private static func orbit(_ view: SpectrumView, out: URL) throws {
     func event(_ type: NSEvent.EventType, _ x: CGFloat, _ y: CGFloat, clicks: Int = 1) -> NSEvent {
       NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: y), modifierFlags: [], timestamp: 0,
@@ -308,15 +308,20 @@ enum SpectrumE2E {
       guard abs(view.camera.pitch - limit * .pi / 180) < 1e-5 else { throw StemError("Pitch went past \(limit)°: \(view.camera)") }
     }
     view.rightMouseUp(with: event(.rightMouseUp, 400, -20000))
-    view.camera = Camera(yaw: start.yaw, pitch: -0.45)
-    if let below = view.picture(scale: 1), let glass = CGContext(data: nil, width: below.width, height: below.height, bitsPerComponent: 8,
-      bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) {
-      let all = CGRect(x: 0, y: 0, width: below.width, height: below.height)
+    // The flat ribbons stay out of the reference view and fill in looking straight down or up.
+    guard Waterfall.steepness(Camera.reference.pitch) == 0, Waterfall.steepness(-0.45) == 0,
+      Waterfall.steepness(1.5) > 0.99, Waterfall.steepness(-1.5) > 0.99 else { throw StemError("Ribbons show from the side, or not from over and under") }
+    // From below, and from straight over and under, where the rows are seen edge on.
+    for (name, pitch) in [("below", Float(-0.45)), ("top", 1.5), ("bottom", -1.5)] {
+      view.camera = Camera(yaw: start.yaw, pitch: pitch)
+      guard let picture = view.picture(scale: 1), let glass = CGContext(data: nil, width: picture.width, height: picture.height, bitsPerComponent: 8,
+        bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else { continue }
+      let all = CGRect(x: 0, y: 0, width: picture.width, height: picture.height)
       glass.setFillColor(CGColor(srgbRed: 0.10, green: 0.11, blue: 0.16, alpha: 1))
       glass.fill(all)
-      glass.draw(below, in: all)
+      glass.draw(picture, in: all)
       try NSBitmapImageRep(cgImage: glass.makeImage()!).representation(using: .png, properties: [:])!
-        .write(to: out.appendingPathComponent("spectrum-below.png"))
+        .write(to: out.appendingPathComponent("spectrum-\(name).png"))
     }
     // Scrolling up zooms in, down zooms out, within half size to 4×.
     func scroll(_ lines: Int32) -> NSEvent {
