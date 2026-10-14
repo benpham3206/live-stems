@@ -347,8 +347,10 @@ final class SpectrumView: NSView {
 
   private func drawFlat(_ context: CGContext) {
     let plot = bounds.insetBy(dx: 12, dy: 12)
-    let top = NSRect(x: plot.minX, y: plot.maxY - plot.height * 0.4, width: plot.width, height: plot.height * 0.4)
-    let below = NSRect(x: plot.minX, y: plot.minY, width: plot.width, height: plot.height * 0.6 - 6)
+    // The spectrum and the spectrogram at the same height, the pair centred in the view.
+    let half = plot.height * 0.4, gap: CGFloat = 6, margin = (plot.height - 2 * half - gap) / 2
+    let top = NSRect(x: plot.minX, y: plot.maxY - margin - half, width: plot.width, height: half)
+    let below = NSRect(x: plot.minX, y: plot.minY + margin, width: plot.width, height: half)
     // Spectrogram: frequency across, newest at the top.
     let width = SpectrumAnalyzer.bands, height = seconds * Self.rowsPerSecond
     var pixels = [UInt32](repeating: 0xFF00_0000, count: width * height)
