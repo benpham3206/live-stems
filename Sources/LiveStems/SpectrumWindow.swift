@@ -9,9 +9,13 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
   private var timer: Timer?, silentRows = 0
   /// Supplies the newest samples as heard now, or nil when nothing plays through Live Stems.
   private let read: (@escaping (Scope?) -> Void) -> Void
-  private let mode = NSSegmentedControl(labels: ["3D", "2D"], trackingMode: .selectOne, target: nil, action: nil)
-  private let scale = NSPopUpButton(), amplitude = NSPopUpButton(), span = NSPopUpButton()
-  private let settings = NSButton()
+  // System toolbar items, so they draw as the system's (Liquid Glass on macOS 26) and cannot overlap.
+  private let mode = NSToolbarItemGroup(itemIdentifier: SpectrumWindowController.modeItem, titles: ["3D", "2D"],
+    selectionMode: .selectOne, labels: ["3D", "2D"], target: nil, action: nil)
+  private let scale = NSMenuToolbarItem(itemIdentifier: SpectrumWindowController.scaleItem),
+    amplitude = NSMenuToolbarItem(itemIdentifier: SpectrumWindowController.amplitudeItem),
+    span = NSMenuToolbarItem(itemIdentifier: SpectrumWindowController.spanItem),
+    settings = NSMenuToolbarItem(itemIdentifier: SpectrumWindowController.settingsItem)
   /// The gear's menu: the model choice.
   private let settingsMenu: () -> NSMenu
 
@@ -62,28 +66,34 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     content.wantsLayer = true
     content.layer?.backgroundColor = CGColor(srgbRed: 0.05, green: 0.07, blue: 0.15, alpha: 0.25)
 
-    mode.selectedSegment = 0
-    mode.segmentDistribution = .fillEqually
-    mode.setWidth(52, forSegment: 0)
-    mode.setWidth(52, forSegment: 1)
-    mode.setAccessibilityLabel("View")
-    scale.addItems(withTitles: ["Log Frequency", "Linear Frequency"])
-    scale.setAccessibilityLabel("Frequency scale")
-    amplitude.addItems(withTitles: ["dB", "Linear"])
-    amplitude.setAccessibilityLabel("Amplitude scale")
-    span.addItems(withTitles: ["2 s", "5 s", "10 s"])
-    span.selectItem(at: 1)
-    span.setAccessibilityLabel("Time span")
-    settings.bezelStyle = .texturedRounded
-    settings.image = symbol(["gearshape"])
-    settings.imagePosition = .imageOnly
-    settings.toolTip = "Model and glow"
-    settings.setAccessibilityLabel("Settings")
-    for (control, action) in [(mode, #selector(changeMode)), (scale, #selector(changeScale)), (amplitude, #selector(changeAmplitude)),
-      (span, #selector(changeSpan)), (settings, #selector(openSettings))] as [(NSControl, Selector)] {
-      control.target = self
-      control.action = action
+    mode.selectedIndex = 0
+    mode.label = "View"
+    mode.target = self
+    mode.action = #selector(changeMode)
+    for (item, label, titles, chosen, action) in [
+      (scale, "Frequency", ["Log Frequency", "Linear Frequency"], 0, #selector(changeScale(_:))),
+      (amplitude, "Amplitude", ["dB", "Linear"], 0, #selector(changeAmplitude(_:))),
+      (span, "Span", ["2 s", "5 s", "10 s"], 1, #selector(changeSpan(_:))),
+    ] as [(NSMenuToolbarItem, String, [String], Int, Selector)] {
+      item.label = label
+      item.title = titles[chosen]
+      item.autovalidates = false
+      item.menu = NSMenu()
+      for (i, title) in titles.enumerated() {
+        let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        entry.target = self
+        entry.tag = i
+        entry.state = i == chosen ? .on : .off
+        item.menu.addItem(entry)
+      }
     }
+    // The gear: the model and the glow curves, rebuilt each time it opens.
+    settings.label = "Settings"
+    settings.image = symbol(["gearshape"])
+    settings.showsIndicator = false
+    settings.toolTip = "Model and glow"
+    settings.menu = NSMenu()
+    settings.menu.delegate = self
     view.setAccessibilityLabel("Spectrum of the mix you hear")
     view.translatesAutoresizingMaskIntoConstraints = false
     content.addSubview(view)
@@ -96,7 +106,7 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     ])
   }
 
-  private static let modeItem = NSToolbarItem.Identifier("mode"), scaleItem = NSToolbarItem.Identifier("scale"),
+  fileprivate static let modeItem = NSToolbarItem.Identifier("mode"), scaleItem = NSToolbarItem.Identifier("scale"),
     amplitudeItem = NSToolbarItem.Identifier("amplitude"), spanItem = NSToolbarItem.Identifier("span"),
     settingsItem = NSToolbarItem.Identifier("settings")
 
@@ -130,14 +140,18 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     return true
   }
   @objc private func changeMode() {
-    view.threeD = mode.selectedSegment == 0
+    view.threeD = mode.selectedIndex == 0
     amplitude.isEnabled = view.threeD  // 2D is MiniMeters' tilted dB view
   }
-  private func choice(_ popup: NSPopUpButton) -> Int { popup.indexOfSelectedItem }
-  @objc private func changeAmplitude() { view.linearAmplitude = choice(amplitude) == 1 }
-  @objc private func openSettings() {
-    gearMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: settings.bounds.maxY + 4), in: settings)
+  /// Ticks the picked entry, shows it as the item's title, and returns its index.
+  private func choose(_ entry: NSMenuItem, in item: NSMenuToolbarItem) -> Int {
+    for other in item.menu.items { other.state = other === entry ? .on : .off }
+    item.title = entry.title
+    return entry.tag
   }
+  @objc private func changeAmplitude(_ entry: NSMenuItem) { view.linearAmplitude = choose(entry, in: amplitude) == 1 }
+  @objc private func changeScale(_ entry: NSMenuItem) { view.logFrequency = choose(entry, in: scale) == 0 }
+  @objc private func changeSpan(_ entry: NSMenuItem) { view.seconds = [2, 5, 10][choose(entry, in: span)] }
   /// The model choice, then the glow curves to compare, the one in use ticked.
   func gearMenu() -> NSMenu {
     let menu = settingsMenu()
@@ -157,8 +171,6 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     UserDefaults.standard.set(item.tag, forKey: Self.glowKey)
   }
   private static let glowKey = "SpectrumGlowLook"
-  @objc private func changeScale() { view.logFrequency = choice(scale) == 0 }
-  @objc private func changeSpan() { view.seconds = [2, 5, 10][choice(span)] }
 }
 
 extension SpectrumWindowController: NSToolbarDelegate {
@@ -167,12 +179,16 @@ extension SpectrumWindowController: NSToolbarDelegate {
   }
   func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { toolbarDefaultItemIdentifiers(toolbar) }
   func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
-    let controls: [NSToolbarItem.Identifier: (NSControl, String)] = [Self.modeItem: (mode, "View"), Self.scaleItem: (scale, "Frequency"),
-      Self.amplitudeItem: (amplitude, "Amplitude"), Self.spanItem: (span, "Span"), Self.settingsItem: (settings, "Settings")]
-    guard let (control, label) = controls[id] else { return nil }
-    let item = NSToolbarItem(itemIdentifier: id)
-    item.view = control
-    item.label = label
-    return item
+    [Self.modeItem: mode, Self.scaleItem: scale, Self.amplitudeItem: amplitude, Self.spanItem: span, Self.settingsItem: settings][id]
+  }
+}
+
+extension SpectrumWindowController: NSMenuDelegate {
+  /// The gear's menu, fresh as it opens: the glow tick follows the current choice.
+  func menuNeedsUpdate(_ menu: NSMenu) {
+    let fresh = gearMenu(), items = fresh.items
+    fresh.removeAllItems()
+    menu.removeAllItems()
+    for item in items { menu.addItem(item) }
   }
 }

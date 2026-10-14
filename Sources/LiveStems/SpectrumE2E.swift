@@ -239,20 +239,15 @@ enum SpectrumE2E {
     return String(format: "%.1f ms highs, %.1f ms lows (%.1f ms highs with no lookahead)", high, low, late)
   }
 
-  /// No two toolbar controls overlap, nor the title, at any width down to the smallest: items that
-  /// do not fit go to the overflow menu.
+  /// The toolbar holds only system-drawn items, which AppKit lays out and moves to the overflow menu
+  /// when they do not fit, so they cannot overlap (a custom view centred on the window did): the
+  /// view switch centred, the three scale menus and the gear.
   private static func toolbarFits(_ controller: SpectrumWindowController) throws {
-    let window = controller.window, before = window.frame.size
-    defer { window.setContentSize(before); window.contentView?.superview?.layoutSubtreeIfNeeded() }
-    for width in stride(from: 1400, through: Int(window.minSize.width), by: -40) {
-      window.setContentSize(NSSize(width: CGFloat(width), height: before.height))
-      window.contentView?.superview?.layoutSubtreeIfNeeded()
-      let shown = (window.toolbar?.items ?? []).compactMap(\.view).filter { $0.window != nil && !$0.isHiddenOrHasHiddenAncestor }
-        .map { ($0.accessibilityLabel() ?? "?", $0.convert($0.alignmentRect(forFrame: $0.bounds), to: nil)) }
-      guard shown.count >= 2 else { throw StemError("At \(width) pt the toolbar shows \(shown.count) controls") }
-      for (i, a) in shown.enumerated() { for b in shown[(i + 1)...] where a.1.intersects(b.1) {
-        throw StemError("At \(width) pt \"\(a.0)\" overlaps \"\(b.0)\": \(a.1) and \(b.1)")
-      } }
+    guard let toolbar = controller.window.toolbar, toolbar.items.allSatisfy({ $0.view == nil }),
+      toolbar.items.compactMap({ $0.isBordered || $0 is NSMenuToolbarItem || $0 is NSToolbarItemGroup ? $0.label : nil })
+        == ["View", "Frequency", "Amplitude", "Span", "Settings"],
+      toolbar.centeredItemIdentifier == toolbar.items.first(where: { $0.label == "View" })?.itemIdentifier else {
+      throw StemError("The toolbar has a custom view, or misses one of view, frequency, amplitude, span, settings")
     }
   }
 
