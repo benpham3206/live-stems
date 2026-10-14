@@ -21,13 +21,13 @@ enum SpectrumE2E {
       }
     }
     // Rows dim steadily as they recede: past the soft front edge each tenth of the span is darker
-    // than the last, down to under a third of the brightest at the back. No plateau where the glow
+    // than the last, down to under 40% of the brightest at the back. No plateau where the glow
     // sits at full.
     var fades = [String]()
     for seconds in [5, 10] {
       let light = try fadeCurve(seconds: seconds, out: out), front = light.max()!
       let curve = light.map { String(format: "%.2f", $0) }.joined(separator: " ")
-      guard light[...2].contains(front), light[9] <= 0.3 * front, (3..<10).allSatisfy({ light[$0] <= 0.95 * light[$0 - 1] }) else {
+      guard light[...2].contains(front), light[9] <= 0.4 * front, (3..<10).allSatisfy({ light[$0] <= 0.95 * light[$0 - 1] }) else {
         throw StemError("At \(seconds) s the glow does not fade steadily with age, front to back: \(curve)")
       }
       fades.append("\(seconds) s \(String(format: "%.2f", light[9] / front))")

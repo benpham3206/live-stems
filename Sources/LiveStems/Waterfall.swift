@@ -82,10 +82,21 @@ final class Waterfall {
     var ground: Float
     /// 0 from the side, rising to 1 looking straight down or up: how much the flat ribbons show.
     var steep: Float
+    /// Rows per drawn line: `lineEvery` for the span.
+    var every: UInt32
+    /// `glowFade` for the span.
+    var glowFade: Float
   }
   /// Ten seconds of rows and one spare, so the row being replaced is never one being drawn.
   // ceiling: 10 s at 30 rows/s; a longer span needs a bigger ring (1.6 kB a row).
   static let capacity = 10 * SpectrumView.rowsPerSecond + 1
+  /// Spacing of the glow lines for each span, in rows (30 a second): 1 draws every row (33 ms apart),
+  /// 2 every other (66 ms), 3 every third (100 ms). More lines also stack more fog.
+  static let lineEvery: [Int: Int] = [2: 2, 5: 2, 10: 2]
+  /// How fast the line glow dims toward the back of each span: the back is at exp(-glowFade) of the
+  /// front (1.7 → 18%, 2.3 → 10%). Lower is brighter at the back, but too low and the front rows,
+  /// stacked edge on, sit at full in a plateau; the spectrum E2E fails then. More lines need more fade.
+  static let glowFade: [Int: Float] = [2: 1.7, 5: 1.7, 10: 2.1]
   let device: MTLDevice
   private let queue: MTLCommandQueue, rowState: MTLRenderPipelineState, gridState: MTLRenderPipelineState,
     floorState: MTLRenderPipelineState, finish: MTLRenderPipelineState
@@ -182,17 +193,17 @@ final class Waterfall {
     guard let scene, let glow, let blur, let hueBuffer else { return }
     // Depth is age over the whole span, so a new row starts receding at once, as the old trail did.
     let full = seconds * SpectrumView.rowsPerSecond, shown = min(count, full)
-    // Every other row, as the reference's ridges are spaced, chosen by its place in the whole
+    // Every `lineEvery` rows (every other, as the reference's ridges are spaced), chosen by its place in the whole
     // stream so a row keeps being drawn as it recedes. Far rows first: by how far each row's
     // plane lies from the eye along time.
-    let eye = camera.eye, span = Float(max(1, full - 1))
-    let rows = (0..<shown).filter { (pushed - 1 - $0) % 2 == 0 }
+    let eye = camera.eye, span = Float(max(1, full - 1)), every = Self.lineEvery[seconds] ?? 2
+    let rows = (0..<shown).filter { (pushed - 1 - $0) % every == 0 }
       .map { age in ((newest - age + Self.capacity) % Self.capacity, abs(Float(age) / span - eye.y)) }
       .sorted { $0.1 > $1.1 }.map { UInt32($0.0) }
     rows.withUnsafeBytes { if $0.count > 0 { order.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) } }
     var frame = Frame(clip: camera.clip(width: Float(width), height: Float(height), scale: scale), pixels: [Float(width), Float(height)], scale: scale,
       bands: UInt32(SpectrumAnalyzer.bands), capacity: UInt32(Self.capacity), newest: UInt32(newest), full: UInt32(full),
-      linear: linear ? 1 : 0, ground: eye.z < 0 ? 0.06 : 0.25, steep: Self.steepness(camera.pitch))
+      linear: linear ? 1 : 0, ground: eye.z < 0 ? 0.06 : 0.25, steep: Self.steepness(camera.pitch), every: UInt32(every), glowFade: Self.glowFade[seconds] ?? 1.7)
     let pass = MTLRenderPassDescriptor()
     pass.colorAttachments[0].texture = scene
     pass.colorAttachments[0].loadAction = .clear
@@ -241,8 +252,8 @@ final class Waterfall {
   private static let shader = """
     #include <metal_stdlib>
     using namespace metal;
-    struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, full, linear; float ground, steep; };
-    struct Lit { float4 position [[position]]; float4 color; float across; float width; float fade; float cover; };
+    struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, full, linear; float ground, steep; uint every; float glowFade; };
+    struct Lit { float4 position [[position]]; float4 color; float across; float width; float fade; float fog; float cover; };
     constant uint sheetEnds[6] = {0, 0, 1, 1, 0, 1};
     constant float sheetTops[6] = {1, 0, 1, 1, 0, 0};
     constant uint lineEnds[6] = {0, 1, 0, 1, 1, 0};
@@ -288,8 +299,8 @@ final class Waterfall {
       Lit out;
       out.color = float4(shade(v, prominence(levels, f.bands, at, v, f.linear), hues[at].rgb), v);
       if (ribbon) {
-        // Two rows deep, as the rows drawn are every other one: the ribbons tile into a spectrogram.
-        float back = min(1.0, t + sheetTops[corner] * 2 / max(1.0, float(f.full - 1)));
+        // As deep as the gap to the next row drawn: the ribbons tile into a spectrogram.
+        float back = min(1.0, t + sheetTops[corner] * float(f.every) / max(1.0, float(f.full - 1)));
         out.position = f.clip * float4(float(at) / (f.bands - 1), back, v, 1);
         out.across = 0;
         out.width = -2;
@@ -306,10 +317,11 @@ final class Waterfall {
         out.across = sheetTops[corner];
         out.width = -1;
       }
-      // Light falls by the same share each second, to a tenth at the back of the span. Cover does
+      // Light falls by the same share each second, to exp(-glowFade) at the back of the span. Cover does
       // not: rows stacked edge on settle at their light over their cover, so a fade on both
       // cancels and the stack stays at full until the last few rows.
-      out.fade = emerge(age) * exp(-2.3 * t);
+      out.fade = emerge(age) * exp(-f.glowFade * t);
+      out.fog = sqrt(emerge(age)) * exp(-1.15 * t);
       out.cover = emerge(age);
       return out;
     }
@@ -317,7 +329,7 @@ final class Waterfall {
       float v = in.color.a;
       if (in.width < -1.5) {
         // The ribbon: the row's colour where loud, over navy fog that thins with age, as the veils.
-        float lit = f.steep * 0.55 * smoothstep(0.15, 0.85, v), fog = f.steep * (0.05 + 0.12 * smoothstep(0.0, 0.3, v)) * sqrt(in.fade);
+        float lit = f.steep * 0.55 * smoothstep(0.15, 0.85, v), fog = f.steep * (0.05 + 0.12 * smoothstep(0.0, 0.3, v)) * in.fog;
         return float4(in.color.rgb * lit * 1.2 * in.fade + float3(0.03, 0.07, 0.30) * fog, (0.6 * lit + fog) * in.cover);
       }
       if (in.width < 0) {
@@ -325,7 +337,7 @@ final class Waterfall {
         float below = (1 - in.across) * v, light = smoothstep(0.25, 0.95, v) * exp(-below / 0.08);
         float veil = 0.04 + 0.08 * smoothstep(0, 0.3, v) + 0.15 * light;
         // The fog fades with age at half the rate of the light, so the whole trail stays in navy haze.
-        return float4(in.color.rgb * 0.2 * light + float3(0.03, 0.07, 0.30) * veil, veil) * sqrt(in.fade);
+        return float4(in.color.rgb * 0.2 * light + float3(0.03, 0.07, 0.30) * veil, veil) * in.fog;
       }
       // A hairline half a point wide, with a pixel of soft edge, that covers what is behind it,
       // in a soft halo of added light, wider and brighter where loud. Distances in points.
