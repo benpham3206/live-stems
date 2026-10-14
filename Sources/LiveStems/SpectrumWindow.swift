@@ -6,7 +6,7 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
   let view = SpectrumView()
   private var analyzer = SpectrumAnalyzer()
-  private var timer: Timer?, hushed = false
+  private var timer: Timer?, silentRows = 0
   /// Supplies the newest samples as heard now, or nil when nothing plays through Live Stems.
   private let read: (@escaping (Scope?) -> Void) -> Void
   private let mode = Choice(["3D", "2D"])
@@ -167,15 +167,16 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
   }
   private func tick() { read { [weak self] in self?.feed($0) } }
   /// One row from the newest samples. When nothing plays, or the mix has stayed under -90 dB
-  /// for 150 ms, no row and no redraw: the view stands still until sound comes back.
+  /// for 150 ms, empty rows scroll in until the whole span sits at the floor; then no row and
+  /// no redraw: the view stands still until sound comes back. Returns whether sound made a row.
   @discardableResult func feed(_ scope: Scope?) -> Bool {
     view.hint = scope == nil ? "Shows what Live Stems plays. Press M or S on a stem to start." : nil
     guard let scope, scope.mix.suffix(Int(0.15 * scope.rate)).contains(where: { abs($0) > 3.2e-5 }) else {
-      if !hushed { view.hush() }
-      hushed = true
+      if silentRows < view.seconds * SpectrumView.rowsPerSecond { view.hush() }
+      silentRows += 1
       return false
     }
-    hushed = false
+    silentRows = 0
     analyzer.rate = scope.rate
     view.push(heard: analyzer.levels(scope.mix, log: view.logFrequency), original: analyzer.levels(scope.original, log: view.logFrequency))
     return true

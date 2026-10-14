@@ -257,7 +257,8 @@ enum SpectrumE2E {
     controller.window.close()
     guard first.rows > 3, second.rows > 3, first.frames > 3, second.frames > 3 else { throw StemError("Rows stopped after the window reopened: \(first) then \(second)") }
   }
-  /// Silence and no session add no rows and leave nothing to redraw; sound starts it again.
+  /// Silence scrolls empty rows until the span is all floor, then adds no rows and leaves nothing
+  /// to redraw; no session adds none; sound starts it again.
   private static func pause(_ controller: SpectrumWindowController) throws {
     let rate: Float = 44100, view = controller.view
     func scope(silentFor seconds: Float) -> Scope {
@@ -267,10 +268,12 @@ enum SpectrumE2E {
       return Scope(mix: mix, original: mix, rate: rate)
     }
     guard controller.feed(scope(silentFor: 0.1)) else { throw StemError("100 ms of silence paused the view") }
-    // Silence drops every level to nothing with one empty row, then holds.
+    // Silence drops every level to nothing, and empty rows push the music out of the span.
     guard !controller.feed(scope(silentFor: 0.16)), view.heard.allSatisfy({ $0 < -150 }), view.original.allSatisfy({ $0 < -150 }) else {
       throw StemError("Silence left the levels standing")
     }
+    for _ in 1..<(view.seconds * SpectrumView.rowsPerSecond) { controller.feed(scope(silentFor: 0.16)) }
+    guard view.history.allSatisfy({ $0.allSatisfy { $0 < -150 } }) else { throw StemError("Silence left music in the span") }
     view.window?.displayIfNeeded()
     let rows = view.rowsPushed, frames = view.framesDrawn
     for _ in 0..<(SpectrumView.rowsPerSecond) {  // a second of silence, then of no session

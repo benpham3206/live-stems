@@ -41,7 +41,7 @@ final class SpectrumView: NSView {
     rowsPushed += 1
     if threeD { redraw() } else { needsDisplay = true }
   }
-  /// Silence: every level drops to nothing, with one empty row at the front, then the view holds.
+  /// Silence: every level drops to nothing, with one empty row at the front.
   func hush() {
     let floor = [Float](repeating: -200, count: SpectrumAnalyzer.bands)
     lastRow = nil
