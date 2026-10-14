@@ -268,11 +268,6 @@ final class Waterfall {
       return c * (0.80 + 0.20 * smoothstep(0.3, 0.8, v));
     }
     // The newest rows fade in over their first `Tuning.emergeRows` rows: a soft front edge that keeps up with the 2D view.
-    // 0 at the front to 1 at the back, as an exponential decay of rate `Tuning.glowDecay`; a straight line at 0.
-    static float decayed(float t) {
-      float k = \(Tuning.glowDecay);
-      return k < 1e-3 ? t : (1 - exp(-k * t)) / (1 - exp(-k));
-    }
     static float emerge(uint age) { return smoothstep(-1.0, \(Tuning.emergeRows), float(age)); }
     // A point pushed sideways from the line a to b by this many pixels, in clip space.
     static float4 widen(constant Frame &f, float4 a, float4 b, bool end, float pixels) {
@@ -315,11 +310,11 @@ final class Waterfall {
         out.across = sheetTops[corner];
         out.width = -1;
       }
-      // Light falls to `glowEnd` at the back of the span along an exponential (`decayed`); the fog by the same share
+      // Light falls as 1 / (1 + a·t) to `glowEnd` at the back of the span; the fog by the same share
       // each second, to `Tuning.fogEnd`. Cover does
       // not: rows stacked edge on settle at their light over their cover, so a fade on both
       // cancels and the stack stays at full until the last few rows.
-      out.fade = emerge(age) * mix(1.0, f.glowEnd, decayed(t));
+      out.fade = emerge(age) / (1 + (1 / f.glowEnd - 1) * t);
       out.fog = sqrt(emerge(age)) * pow(\(Tuning.fogEnd), t);
       out.cover = emerge(age);
       return out;

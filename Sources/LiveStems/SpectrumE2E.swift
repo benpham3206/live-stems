@@ -27,7 +27,7 @@ enum SpectrumE2E {
       let light = try fadeCurve(seconds: seconds, out: out), front = light.max()!
       let curve = light.map { String(format: "%.2f", $0) }.joined(separator: " ")
       guard light[...2].contains(front), (3..<10).allSatisfy({ light[$0] <= light[$0 - 1] + 0.02 }),
-        light[9] <= 0.85 * front, light[9] >= 0.3 * front else {
+        light[9] <= 0.85 * front, light[9] >= 0.2 * front else {
         throw StemError("At \(seconds) s the glow does not fade steadily with age, front to back: \(curve)")
       }
       fades.append("\(seconds) s \(String(format: "%.2f", light[9] / front))")
