@@ -127,7 +127,8 @@ final class ControlsPanel: NSView {
     }
     spectrumButton.bezelStyle = .push
     spectrumButton.controlSize = .large
-    spectrumButton.image = symbol(["chart.bar.xaxis", "waveform"])
+    spectrumButton.image = symbol(["chart.bar.xaxis", "waveform"]).withSymbolConfiguration(.init(scale: .large))
+    if #available(macOS 26.0, *) { spectrumButton.borderShape = .capsule }
     spectrumButton.imagePosition = .imageOnly
     spectrumButton.toolTip = "Spectrum Analyzer"
     spectrumButton.setAccessibilityLabel("Spectrum Analyzer")
