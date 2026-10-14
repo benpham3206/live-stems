@@ -95,6 +95,19 @@ final class LevelMeter: NSView {
   }
 }
 
+/// The channel fader. The scroll wheel moves it in dB (1 dB per wheel notch, 0.1 dB per trackpad point)
+/// and fires the same action a drag does; fingers up is louder, whichever way the system scrolls.
+final class Fader: NSSlider {
+  override func scrollWheel(with event: NSEvent) {
+    let dy = Double(event.scrollingDeltaY)
+    guard abs(dy) > abs(Double(event.scrollingDeltaX)) else { return super.scrollWheel(with: event) }
+    let up = event.isDirectionInvertedFromDevice ? -dy : dy
+    let db = (doubleValue > 0 ? 20 * log10(doubleValue) : -60) + (event.hasPreciseScrollingDeltas ? up * 0.1 : up.sign == .plus ? 1 : -1)
+    doubleValue = db <= -60 ? minValue : min(maxValue, max(minValue, pow(10, db / 20)))
+    if let action { _ = (target as AnyObject?)?.perform(action, with: self) }
+  }
+}
+
 /// Logic-style fader: a groove, a dB scale, and a metal cap. The value stays
 /// linear gain 0–1; the scale only marks where each dB value sits.
 final class FaderCell: NSSliderCell {

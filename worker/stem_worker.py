@@ -52,6 +52,8 @@ def main():
     def has_model(name):
         return all((args.cache/(name+suffix)).is_file() for suffix in ['.safetensors','_config.json'])
     # Only require the files the choice can use. auto starts with htdemucs_ft and may fall back to htdemucs.
+    # A light install has only htdemucs; auto then uses it.
+    if args.model=='auto' and not has_model('htdemucs_ft') and has_model('htdemucs'):args.model='htdemucs'
     if not has_model('htdemucs' if args.model=='htdemucs' else 'htdemucs_ft'):raise FileNotFoundError('Missing local model cache')
     import mlx.core as mx
     import numpy as np

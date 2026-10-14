@@ -92,6 +92,34 @@ enum FaderRedrawE2E {
       if ghosts > 0 { failures.append("\(name): \(ghosts)") }
     }
     guard failures.isEmpty else { throw StemError("FAIL fader-redraw · ghost pixels: " + failures.joined(separator: "; ")) }
-    print("PASS fader-redraw · \(report.count) scenarios, no ghost pixels")
+    try checkScroll()
+    print("PASS fader-redraw · \(report.count) scenarios, no ghost pixels, scroll wheel moves the fader")
+  }
+
+  private final class Hits: NSObject {
+    var count = 0
+    @objc func hit(_ sender: Any?) { count += 1 }
+  }
+
+  /// Wheel scrolls move the fader like a drag: fingers up raises it, down lowers it, both clamp, and each fires the action.
+  private static func checkScroll() throws {
+    let hits = Hits()
+    let fader = Fader(value: 0.5, minValue: 0, maxValue: 1, target: hits, action: #selector(Hits.hit))
+    /// Scrolls `notches` wheel notches; positive is a wheel rolled up, or fingers moved down on a natural-scroll device.
+    func scroll(_ notches: Int32) {
+      let event = NSEvent(cgEvent: CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: notches, wheel2: 0, wheel3: 0)!)!
+      fader.scrollWheel(with: event)
+    }
+    let natural = NSEvent(cgEvent: CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: 1, wheel2: 0, wheel3: 0)!)!.isDirectionInvertedFromDevice
+    let louder: Int32 = natural ? -3 : 3
+    scroll(louder)
+    guard fader.floatValue > 0.5 && hits.count == 1 else { throw StemError("FAIL fader-redraw · scroll up should raise the fader and fire the action, got \(fader.floatValue), \(hits.count) hits") }
+    scroll(-louder)
+    scroll(-louder)
+    guard fader.floatValue < 0.5 && hits.count == 3 else { throw StemError("FAIL fader-redraw · scroll down should lower the fader and fire the action, got \(fader.floatValue), \(hits.count) hits") }
+    for _ in 0..<80 { scroll(louder) }
+    guard fader.floatValue == 1 else { throw StemError("FAIL fader-redraw · scroll up should stop at max, got \(fader.floatValue)") }
+    for _ in 0..<80 { scroll(-louder) }
+    guard fader.floatValue == 0 else { throw StemError("FAIL fader-redraw · scroll down should stop at min, got \(fader.floatValue)") }
   }
 }

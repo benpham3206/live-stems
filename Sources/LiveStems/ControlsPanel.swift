@@ -7,9 +7,10 @@ func symbol(_ names: [String]) -> NSImage {
 
 /// A faint rounded tray that groups controls on the glass.
 class Backdrop: NSView {
+  var radius: CGFloat = 10, fill = NSColor.labelColor.withAlphaComponent(0.05)
   override func draw(_ dirtyRect: NSRect) {
-    let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 10, yRadius: 10)
-    NSColor.labelColor.withAlphaComponent(0.05).setFill()
+    let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: radius, yRadius: radius)
+    fill.setFill()
     shape.fill()
     NSColor.labelColor.withAlphaComponent(0.09).setStroke()
     shape.stroke()
@@ -22,7 +23,7 @@ final class ChannelStrip: Backdrop {
   static let size = NSSize(width: 80, height: 316)
   let name: String, color: NSColor, icon: NSImage
   let waveform: StemWaveform, meter: LevelMeter
-  let fader = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
+  let fader = Fader(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
   let mute = LogicToggle(letter: "M", lit: ControlsPanel.muteColor)
   let solo = LogicToggle(letter: "S", lit: ControlsPanel.soloColor)
   /// A silent strip (muted, or not soloed while another is) fades; a soloed one glows in its color.
@@ -97,7 +98,8 @@ final class ControlsPanel: NSView {
   static let size = NSSize(width: 360, height: 540)
   static let muteColor = NSColor.systemBlue
   static let soloColor = NSColor(srgbRed: 1, green: 0.82, blue: 0.2, alpha: 1)
-  let sourcePicker = NSPopUpButton(frame: NSRect(x: 14, y: 478, width: 236, height: 28), pullsDown: true)
+  let sourcePicker = NSPopUpButton(frame: NSRect(x: 14, y: 478, width: 196, height: 28), pullsDown: true)
+  let spectrumButton = NSButton(frame: NSRect(x: 214, y: 478, width: 36, height: 28))
   let resetButton = NSButton(title: "Reset", target: nil, action: nil)
   let statusLabel = NSTextField(labelWithString: ""), outputLabel = NSTextField(labelWithString: "")
   let muteAllButton = LogicToggle(letter: "M", lit: muteColor)
@@ -123,6 +125,13 @@ final class ControlsPanel: NSView {
       button.image = symbol([name])
       button.imagePosition = .imageLeading
     }
+    spectrumButton.bezelStyle = .push
+    spectrumButton.controlSize = .large
+    spectrumButton.image = symbol(["chart.bar.xaxis", "waveform"]).withSymbolConfiguration(.init(scale: .large))
+    if #available(macOS 26.0, *) { spectrumButton.borderShape = .capsule }
+    spectrumButton.imagePosition = .imageOnly
+    spectrumButton.toolTip = "Spectrum Analyzer"
+    spectrumButton.setAccessibilityLabel("Spectrum Analyzer")
     statusLabel.frame = NSRect(x: 16, y: 452, width: 328, height: 18)
     statusLabel.font = .systemFont(ofSize: 13, weight: .semibold)
     statusLabel.lineBreakMode = .byTruncatingTail
@@ -148,7 +157,7 @@ final class ControlsPanel: NSView {
     clearSoloButton.setAccessibilityLabel("Clear all solos")
     clearSoloButton.toolTip = "Clear all solos"
     for view in [allLabel, muteAllButton, clearSoloButton] { allRow.addSubview(view) }
-    for view in [sourcePicker, resetButton, statusLabel, headphones, outputLabel, allRow, quitButton] + strips as [NSView] {
+    for view in [sourcePicker, spectrumButton, resetButton, statusLabel, headphones, outputLabel, allRow, quitButton] + strips as [NSView] {
       addSubview(view)
     }
   }

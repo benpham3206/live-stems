@@ -111,6 +111,15 @@ final class AudioSession {
   /// The capture rate follows the output device (44.1, 48, 24 kHz for AirPods
   /// with the mic on, ...). The converter and the core are built for `rate`.
   var captureRateChanged: Bool { (try? tapFormat().mSampleRate) != rate }
+  /// Seconds from render to speaker (AirPods add ~0.2 s), so a display can wait for the sound.
+  /// Read once per output: the query goes to the audio server and cost ~10% of a core at 30 reads a second.
+  var outputLatency: Double {
+    if let latency { return latency }
+    let value = engine.outputNode.presentationLatency
+    latency = value
+    return value
+  }
+  private var latency: Double?
   /// AVAudioEngine stops itself when the output device's format changes.
   var outputStopped: Bool { !engine.isRunning }
   /// Many apps play audio from helper processes: browsers (com.google.Chrome.helper,
@@ -173,10 +182,12 @@ final class AudioSession {
     engine.reset()
     setSmallOutputBuffer()
     try engine.start()
+    latency = nil
   }
   func start() throws {
     do {
       try engine.start()
+      latency = nil
       try audioCheck(
         AudioDeviceStart(aggregate, ioProc),
         "Cannot start audio capture")

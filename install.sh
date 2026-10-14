@@ -4,6 +4,7 @@
 #   One-liner:        curl -fsSL https://raw.githubusercontent.com/benpham3206/live-stems/main/install.sh | zsh
 #   From a checkout:  zsh install.sh
 #   Preview only:     zsh install.sh --dry-run   (or: ... | zsh -s -- --dry-run)
+#   Light model only: zsh install.sh --light     (84 MB; what M1 and M2 Macs pick anyway)
 #
 # Everything lives in ~/LiveStems: the source, a Python environment, the model, and the signing
 # identity. The app is built on this Mac and copied to /Applications.
@@ -16,8 +17,15 @@ VENV=$ROOT/work/stems-venv
 MODEL=$ROOT/work/model-cache
 IDENTITY=$ROOT/work/live-stems-signing-identity.txt
 CERT="Live Stems Local"
-DRY=0
-[[ ${1:-} == --dry-run ]] && DRY=1
+MODELS_URL=https://github.com/benpham3206/live-stems/releases/download/models-v1
+DRY=0 LIGHT=0
+for arg in "$@"; do
+  case $arg in
+    --dry-run) DRY=1 ;;
+    --light) LIGHT=1 ;;
+    *) print "error: unknown option $arg" >&2; exit 2 ;;
+  esac
+done
 
 say()  { print "==> $*"; }
 fail() { print "error: $*" >&2; exit 1; }
@@ -48,23 +56,30 @@ else
   run git clone "$REPO" "$SOURCE"
 fi
 
-# 4. Python packages and the model (about 1.5 GB to download, once)
+# 4. Python packages and the model (about 0.6 GB to download, once)
 if [[ ! -x $VENV/bin/python ]]; then
   say "Creating the Python environment"
   run "$PYTHON" -m venv "$VENV"
 fi
 if ! (( DRY )) && ! "$VENV/bin/python" -c "import demucs_mlx" 2>/dev/null; then
   say "Installing the separation library"
-  run "$VENV/bin/pip" install --quiet "demucs-mlx[convert]==1.5.3"
+  run "$VENV/bin/pip" install --quiet "demucs-mlx==1.5.3"
 fi
-if [[ ! -f $MODEL/htdemucs_ft.safetensors ]]; then
-  say "Downloading and converting the model (a few minutes)"
-  run "$VENV/bin/python" -m demucs_mlx.mlx_convert htdemucs_ft --output-dir "$MODEL"
-fi
-# The lighter one-network model, used when this Mac's GPU is too slow for htdemucs_ft (M1, M2)
-if [[ ! -f $MODEL/htdemucs.safetensors ]]; then
-  say "Downloading the lighter model for slower Macs"
-  run "$VENV/bin/python" -m demucs_mlx.mlx_convert htdemucs --output-dir "$MODEL"
+# Pre-converted weights at half size: no PyTorch, no conversion. htdemucs_ft is the cleaner
+# model (four networks, 336 MB); htdemucs is the lighter one slower GPUs use (84 MB).
+models=(htdemucs)
+(( LIGHT )) || models+=(htdemucs_ft)
+missing=() urls=()
+for m in $models; do
+  [[ -f $MODEL/$m.safetensors ]] && continue
+  missing+=($m)
+  urls+=(-O "$MODELS_URL/$m.f16" -O "$MODELS_URL/${m}_config.json")
+done
+if (( ${#missing} )); then
+  say "Downloading the model: ${missing[*]} (resumes if interrupted)"
+  run mkdir -p "$MODEL"
+  run curl --fail --location --retry 5 --parallel --continue-at - --progress-bar --output-dir "$MODEL" $urls
+  run "$VENV/bin/python" "$SOURCE/script/models.py" unpack "$MODEL" $missing
 fi
 
 # 5. A signing certificate, so macOS remembers the audio permission across updates

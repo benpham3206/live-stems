@@ -7,6 +7,10 @@ final class WorkerClient {
   private var log: FileHandle?
   private let lifecycle = NSLock()
   private var cancelled = false
+  private let model: StemModel
+  /// The model the worker loaded, known once it is ready.
+  private(set) var runningModel = StemModel.automatic
+  init(model: StemModel = .automatic) { self.model = model }
   private func launch() throws {
     lifecycle.lock()
     defer { lifecycle.unlock() }
@@ -28,7 +32,7 @@ final class WorkerClient {
         self.process.executableURL = LocalSettings.python
         self.process.arguments = [
           LocalSettings.source.appendingPathComponent("worker/stem_worker.py").path, "--cache",
-          LocalSettings.cache.path, "--trace-dir", LocalSettings.evidence.path,
+          LocalSettings.cache.path, "--trace-dir", LocalSettings.evidence.path, "--model", self.model.rawValue,
         ]
         self.process.standardInput = self.input
         self.process.standardOutput = self.output
@@ -45,6 +49,7 @@ final class WorkerClient {
           ready["sources"] as? [String] == ["vocals", "drums", "bass", "other"],
           ready["window_frames"] as? Int == 44100
         else { throw StemError("Model did not become ready") }
+        self.runningModel = StemModel(rawValue: ready["model"] as? String ?? "") ?? self.model
         completion(.success(()))
       } catch {
         self.stop()

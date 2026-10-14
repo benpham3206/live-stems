@@ -148,6 +148,8 @@ enum NativeE2E {
       try MenuE2E.spam(out)
     case "snapshot":
       try MenuE2E.snapshot(out)
+    case "spectrum":
+      try SpectrumE2E.run(out)
     case "fader-redraw":
       try FaderRedrawE2E.run()
     case "transitions":
