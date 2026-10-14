@@ -5,7 +5,7 @@ enum Tuning {
   /// Glow line brightness at the back of each span, as a share of the front. The glow fades in a
   /// straight line from the front to this. Longer spans stack more lines, so they need a lower value
   /// to look the same; too high and the front sits at full (the spectrum E2E fails).
-  static let glowEnd: [Int: Float] = [2: 0.5, 5: 0.5, 10: 0.35]
+  static let glowEnd: [Int: Float] = [2: 0.34, 5: 0.34, 10: 0.24]
   /// Rows between glow lines, for each span: 1 is every row (33 ms apart), 2 every other (66 ms),
   /// 3 every third (100 ms). More lines also stack more glow and fog.
   static let lineEvery: [Int: Int] = [2: 2, 5: 2, 10: 2]
