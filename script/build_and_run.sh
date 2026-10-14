@@ -126,7 +126,9 @@ stem_bin="$(swift build --configuration release --package-path "$stem_package" -
 stem_stage="$(mktemp -d "$stem_workspace/work/live-stems-package.XXXXXX")"
 stem_staged_app="$stem_stage/Live Stems.app"
 mkdir -p "$stem_staged_app/Contents/MacOS" "$stem_staged_app/Contents/Resources"
-cp "$stem_bin/LiveStems" "$stem_staged_app/Contents/MacOS/LiveStems"
+# SwiftPM records the deployment target (14.2) as the SDK, so AppKit would draw the pre-macOS 26
+# controls (no Liquid Glass buttons). Record the SDK the app was built with.
+vtool -set-build-version macos 14.2 "$(xcrun --show-sdk-version)" -replace -output "$stem_staged_app/Contents/MacOS/LiveStems" "$stem_bin/LiveStems"
 cp "$stem_package/Resources/Info.plist" "$stem_staged_app/Contents/Info.plist"
 cp "$stem_icon" "$stem_staged_app/Contents/Resources/LiveStems.icns"
 "$stem_python" - "$stem_staged_app/Contents/Resources/local.json" "$stem_workspace" <<'PY'
