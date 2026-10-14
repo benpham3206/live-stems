@@ -1,0 +1,42 @@
+#!/bin/zsh
+# stems: the Live Stems helper for trying changes. Run ./stems with no arguments for help.
+set -euo pipefail
+
+ROOT=${0:A:h}
+
+usage() {
+  cat <<'HELP'
+Live Stems helper
+
+  ./stems tune               list the values you can tune (Sources/LiveStems/Tuning.swift)
+  ./stems render [folder]    draw the spectrum offscreen: 3D, 2D, top, bottom, below (PNG paths printed)
+  ./stems verify             build, then run the checks (script/verify.sh); exit 0 means all passed
+  ./stems install            build, then replace and restart the installed app (script/build_and_run.sh)
+
+To change how the 3D spectrum looks: edit Tuning.swift, ./stems render, ./stems verify, ./stems install.
+HELP
+}
+
+case ${1:-help} in
+  tune)
+    # Each value with the comment above it, read from the file so the list is never out of date.
+    awk '/^  \/\/\//{doc = doc substr($0, 7) "\n"; next} /^  static let/{sub(/^  static let /, ""); printf "\033[1m%s\033[0m\n%s\n", $0, doc; doc = ""; next} {doc = ""}' \
+      "$ROOT/Sources/LiveStems/Tuning.swift"
+    ;;
+  render)
+    out=${2:-$(mktemp -d)}
+    mkdir -p "$out"
+    swift build -c release --package-path "$ROOT" 2>&1 | grep -E "error|Compiling|Build complete" | tail -3
+    "$ROOT/.build/release/LiveStems" --e2e spectrum --output "$out"
+    ls "$out"/spectrum-*.png
+    ;;
+  verify)
+    bash "$ROOT/script/verify.sh"
+    ;;
+  install)
+    bash "$ROOT/script/build_and_run.sh"
+    ;;
+  *)
+    usage
+    ;;
+esac

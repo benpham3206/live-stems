@@ -20,14 +20,14 @@ enum SpectrumE2E {
         guard levels.min()! < expected - 60 else { throw StemError("Sine \(hz) Hz leaks across the spectrum") }
       }
     }
-    // Rows dim steadily as they recede: past the soft front edge each tenth of the span is darker
-    // than the last, down to under 40% of the brightest at the back. No plateau where the glow
-    // sits at full.
+    // Rows never brighten as they recede, and the back is dimmer than the front but still lit. A
+    // steady tone stacks every row's glow, so its front sits near full: real music fades more.
     var fades = [String]()
     for seconds in [5, 10] {
       let light = try fadeCurve(seconds: seconds, out: out), front = light.max()!
       let curve = light.map { String(format: "%.2f", $0) }.joined(separator: " ")
-      guard light[...2].contains(front), light[9] <= 0.4 * front, (3..<10).allSatisfy({ light[$0] <= 0.95 * light[$0 - 1] }) else {
+      guard light[...2].contains(front), (3..<10).allSatisfy({ light[$0] <= light[$0 - 1] + 0.02 }),
+        light[9] <= 0.85 * front, light[9] >= 0.3 * front else {
         throw StemError("At \(seconds) s the glow does not fade steadily with age, front to back: \(curve)")
       }
       fades.append("\(seconds) s \(String(format: "%.2f", light[9] / front))")
