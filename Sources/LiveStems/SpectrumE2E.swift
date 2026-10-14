@@ -152,6 +152,17 @@ enum SpectrumE2E {
       if let picture = view.picture(scale: 1) { window.draw(picture, in: view.frame) }
       try png(window.makeImage()!, "spectrum-window.png")
     }
+    // The gear menu offers every glow curve, the one in use ticked; picking one switches the view.
+    let glows = controller.gearMenu().items.filter { $0.action == #selector(SpectrumWindowController.pickGlow(_:)) }
+    guard glows.map(\.title) == Tuning.glowLooks.map(\.name), glows.filter({ $0.state == .on }).map(\.tag) == [view.glowLook] else {
+      throw StemError("The gear menu does not list the glow curves with the one in use ticked")
+    }
+    let kept = view.glowLook
+    controller.pickGlow(glows[0])
+    guard view.glowLook == 0, controller.gearMenu().items.first(where: { $0.state == .on && $0.tag == 0 && $0.action != nil }) != nil else {
+      throw StemError("Picking a glow curve did not switch the view")
+    }
+    controller.pickGlow(glows[kept])
     try orbit(view, out: out)
     try pause(controller)
     try labelsInside(controller)

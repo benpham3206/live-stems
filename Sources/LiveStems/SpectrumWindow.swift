@@ -195,7 +195,10 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
   }
   @objc private func changeAmplitude() { view.linearAmplitude = choice(amplitude) == 1 }
   @objc private func openSettings() {
-    // The model choice, then the glow curves to compare.
+    gearMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: settings.bounds.maxY + 4), in: settings)
+  }
+  /// The model choice, then the glow curves to compare, the one in use ticked.
+  func gearMenu() -> NSMenu {
     let menu = settingsMenu()
     menu.addItem(.separator())
     menu.addItem(.sectionHeader(title: "Glow"))
@@ -206,9 +209,9 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
       item.state = i == view.glowLook ? .on : .off
       menu.addItem(item)
     }
-    menu.popUp(positioning: nil, at: NSPoint(x: 0, y: settings.bounds.maxY + 4), in: settings)
+    return menu
   }
-  @objc private func pickGlow(_ item: NSMenuItem) {
+  @objc func pickGlow(_ item: NSMenuItem) {
     view.glowLook = item.tag
     UserDefaults.standard.set(item.tag, forKey: Self.glowKey)
   }
