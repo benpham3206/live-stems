@@ -243,6 +243,9 @@ enum SpectrumE2E {
   /// when they do not fit, so they cannot overlap (a custom view centred on the window did): the
   /// view switch centred, the three scale menus and the gear.
   private static func toolbarFits(_ controller: SpectrumWindowController) throws {
+    guard controller.window.collectionBehavior.isSuperset(of: [.moveToActiveSpace, .fullScreenAuxiliary]) else {
+      throw StemError("The Spectrum window would not come over a full-screen app")
+    }
     guard let toolbar = controller.window.toolbar, toolbar.items.allSatisfy({ $0.view == nil }),
       toolbar.items.compactMap({ $0.isBordered || $0 is NSMenuToolbarItem || $0 is NSToolbarItemGroup ? $0.label : nil })
         == ["View", "Frequency", "Amplitude", "Span", "Settings"],

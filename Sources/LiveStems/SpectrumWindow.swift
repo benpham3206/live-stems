@@ -40,6 +40,9 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     window.titlebarAppearsTransparent = true
     window.isMovableByWindowBackground = true
     window.isReleasedWhenClosed = false
+    // Over a full-screen app (Spotify, a YouTube video), Cmd+Tab brings the window into that Space
+    // on top of it, as the panel does, instead of switching Spaces to the desktop.
+    window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
     window.appearance = NSAppearance(named: .darkAqua)
     window.minSize = NSSize(width: 720, height: 460)  // the 3D labels stay inside the view (checked)
     window.isOpaque = false
