@@ -303,7 +303,8 @@ final class Waterfall {
         // A veil over the rows behind, lit just under its top where loud: the peaks glow from within.
         float below = (1 - in.across) * v, light = smoothstep(0.25, 0.95, v) * exp(-below / 0.08);
         float veil = 0.04 + 0.08 * smoothstep(0, 0.3, v) + 0.15 * light;
-        return float4(in.color.rgb * 0.2 * light + float3(0.03, 0.07, 0.30) * veil, veil) * in.fade * in.fade;
+        // The fog fades with age at half the rate of the light, so the whole trail stays in navy haze.
+        return float4(in.color.rgb * 0.2 * light + float3(0.03, 0.07, 0.30) * veil, veil) * sqrt(in.fade);
       }
       // A hairline half a point wide, with a pixel of soft edge, that covers what is behind it,
       // in a soft halo of added light, wider and brighter where loud. Distances in points.
