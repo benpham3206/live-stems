@@ -25,7 +25,9 @@ enum Tuning {
     ("Exponential · to 34%", .scaledExponential(k: 2, end: [2: 0.34, 5: 0.34, 10: 0.24])),
     ("1/x · to 11%", .inverse(end: [2: 0.11, 5: 0.11, 10: 0.11])),
   ]
-  static let glowLook = 5
+  /// Default: the brighter-back exponential. The present stays vivid and the past sinks into the fog,
+  /// for depth rather than an evenly lit spectrogram.
+  static let glowLook = 1
   /// Rows between glow lines, for each span: 1 is every row (33 ms apart), 2 every other (66 ms),
   /// 3 every third (100 ms). More lines also stack more glow and fog.
   static let lineEvery: [Int: Int] = [2: 2, 5: 2, 10: 2]

@@ -139,19 +139,21 @@ enum SpectrumE2E {
     // The whole window, toolbar included, over a dusk-blue stand-in for the desktop behind the
     // glass, which renders opaque grey off screen; the 3D view drawn off screen in its place.
     view.threeD = true
-    if let content = view.superview {
+    if let frame = controller.window.contentView?.superview {
       view.isHidden = true
-      let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds)!
-      content.cacheDisplay(in: content.bounds, to: rep)
+      frame.layoutSubtreeIfNeeded()
+      let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)!
+      frame.cacheDisplay(in: frame.bounds, to: rep)
       view.isHidden = false
-      let window = bitmap(content.bounds.size, scale: 1)
+      let window = bitmap(frame.bounds.size, scale: 1)
       window.drawLinearGradient(CGGradient(colorsSpace: nil, colors: [CGColor(srgbRed: 0.13, green: 0.15, blue: 0.20, alpha: 1),
         CGColor(srgbRed: 0.22, green: 0.25, blue: 0.37, alpha: 1)] as CFArray, locations: nil)!,
-        start: .zero, end: CGPoint(x: 0, y: content.bounds.height), options: [])
-      window.draw(rep.cgImage!, in: content.bounds)
-      if let picture = view.picture(scale: 1) { window.draw(picture, in: view.frame) }
+        start: .zero, end: CGPoint(x: 0, y: frame.bounds.height), options: [])
+      window.draw(rep.cgImage!, in: frame.bounds)
+      if let picture = view.picture(scale: 1) { window.draw(picture, in: view.convert(view.bounds, to: frame)) }
       try png(window.makeImage()!, "spectrum-window.png")
     }
+    try toolbarFits(controller)
     // The gear menu offers every glow curve, the one in use ticked; picking one switches the view.
     let glows = controller.gearMenu().items.filter { $0.action == #selector(SpectrumWindowController.pickGlow(_:)) }
     guard glows.map(\.title) == Tuning.glowLooks.map(\.name), glows.filter({ $0.state == .on }).map(\.tag) == [view.glowLook] else {
@@ -235,6 +237,23 @@ enum SpectrumE2E {
     let high = peak(5000, ahead: SpectrumAnalyzer.ahead), low = peak(100, ahead: SpectrumAnalyzer.ahead), late = peak(5000, ahead: 0)
     guard high <= 30 else { throw StemError("A click peaks \(high) ms after it is heard") }
     return String(format: "%.1f ms highs, %.1f ms lows (%.1f ms highs with no lookahead)", high, low, late)
+  }
+
+  /// No two toolbar controls overlap, nor the title, at any width down to the smallest: items that
+  /// do not fit go to the overflow menu.
+  private static func toolbarFits(_ controller: SpectrumWindowController) throws {
+    let window = controller.window, before = window.frame.size
+    defer { window.setContentSize(before); window.contentView?.superview?.layoutSubtreeIfNeeded() }
+    for width in stride(from: 1400, through: Int(window.minSize.width), by: -40) {
+      window.setContentSize(NSSize(width: CGFloat(width), height: before.height))
+      window.contentView?.superview?.layoutSubtreeIfNeeded()
+      let shown = (window.toolbar?.items ?? []).compactMap(\.view).filter { $0.window != nil && !$0.isHiddenOrHasHiddenAncestor }
+        .map { ($0.accessibilityLabel() ?? "?", $0.convert($0.alignmentRect(forFrame: $0.bounds), to: nil)) }
+      guard shown.count >= 2 else { throw StemError("At \(width) pt the toolbar shows \(shown.count) controls") }
+      for (i, a) in shown.enumerated() { for b in shown[(i + 1)...] where a.1.intersects(b.1) {
+        throw StemError("At \(width) pt \"\(a.0)\" overlaps \"\(b.0)\": \(a.1) and \(b.1)")
+      } }
+    }
   }
 
   /// At the reset angle every label lies inside the view, in a very wide window, a very tall
