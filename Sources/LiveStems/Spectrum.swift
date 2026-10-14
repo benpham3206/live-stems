@@ -25,9 +25,10 @@ final class SpectrumView: NSView {
     let tilts = SpectrumAnalyzer.frequencies(log: logFrequency).map { Self.tilt * log2($0 / 1000) }
     let mix = zip(newHeard, tilts).map(+), song = zip(newOriginal, tilts).map(+)
     history.append(mix)
-    // Rows average the last few in power, so noise settles into a smooth floor under the peaks.
+    // Rows rise at once, as the 2D bars do, and fall through a power average of the last few,
+    // so noise settles into a smooth floor under the peaks.
     let row = lastRow.map { last in
-      last.count == newHeard.count ? zip(last, newHeard).map { 10 * log10(0.3 * pow(10, $0 / 10) + 0.7 * pow(10, $1 / 10)) } : newHeard
+      last.count == newHeard.count ? zip(last, newHeard).map { max($1, 10 * log10(0.3 * pow(10, $0 / 10) + 0.7 * pow(10, $1 / 10))) } : newHeard
     } ?? newHeard
     lastRow = row
     waterfall?.push(row)

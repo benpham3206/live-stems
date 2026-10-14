@@ -254,8 +254,8 @@ final class Waterfall {
       c = mix(c, float3(1.0, 0.97, 0.88), smoothstep(0.90, 1.0, v) * 0.5);
       return c * (0.80 + 0.20 * smoothstep(0.3, 0.8, v));
     }
-    // The newest rows fade in from clear over the first fifth of the box: a soft front edge.
-    static float emerge(float t) { return 0.05 + 0.95 * smoothstep(0.0, 0.2, t); }
+    // The newest rows fade in over their first two rows: a soft front edge that keeps up with the 2D view.
+    static float emerge(uint age) { return smoothstep(-1.0, 2.0, float(age)); }
     // A point pushed sideways from the line a to b by this many pixels, in clip space.
     static float4 widen(constant Frame &f, float4 a, float4 b, bool end, float pixels) {
       float2 pa = a.xy / a.w * f.pixels / 2, pb = b.xy / b.w * f.pixels / 2;
@@ -293,8 +293,8 @@ final class Waterfall {
       // Light falls by the same share each second, to a tenth at the back of the span. Cover does
       // not: rows stacked edge on settle at their light over their cover, so a fade on both
       // cancels and the stack stays at full until the last few rows.
-      out.fade = emerge(t) * exp(-2.3 * t);
-      out.cover = emerge(t);
+      out.fade = emerge(age) * exp(-2.3 * t);
+      out.cover = emerge(age);
       return out;
     }
     fragment float4 rowLight(Lit in [[stage_in]], constant Frame &f [[buffer(0)]]) {
