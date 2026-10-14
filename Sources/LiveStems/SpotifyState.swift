@@ -196,8 +196,7 @@ final class SpotifyState {
       NSAppleScript(source: "tell application \"Spotify\" to \(verb)")?.executeAndReturnError(&error)
     }
   }
-  private static func readSnapshot() throws -> PlaybackSnapshot {
-    let source = """
+  private static let stateSource = """
     with timeout of 1 second
       if application "Spotify" is not running then error number -1708
       tell application "Spotify"
@@ -212,11 +211,22 @@ final class SpotifyState {
       end tell
     end timeout
     """
+  /// Compiled on its first run and kept: compiling it every 250 ms was ~40% of each read. A
+  /// failed read drops it, so the next read compiles afresh, as every read did before.
+  /// NSAppleScript is not thread-safe, and two sessions can overlap for a moment.
+  private static var stateScript: NSAppleScript?
+  private static let stateScriptLock = NSLock()
+  private static func readSnapshot() throws -> PlaybackSnapshot {
     var scriptError: NSDictionary?
-    guard let script = NSAppleScript(source: source) else {
+    stateScriptLock.lock()
+    guard let script = stateScript ?? NSAppleScript(source: stateSource) else {
+      stateScriptLock.unlock()
       throw StemError("Cannot create Spotify state script")
     }
-    guard let value = script.executeAndReturnError(&scriptError).stringValue else {
+    let reply = script.executeAndReturnError(&scriptError)
+    stateScript = reply.stringValue == nil ? nil : script
+    stateScriptLock.unlock()
+    guard let value = reply.stringValue else {
       if let scriptError, let message = scriptError[NSAppleScript.errorMessage] as? String {
         throw StemError("Spotify state unavailable · \(message)")
       }
