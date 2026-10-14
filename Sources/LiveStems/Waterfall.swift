@@ -233,7 +233,7 @@ final class Waterfall {
     #include <metal_stdlib>
     using namespace metal;
     struct Frame { float4x4 clip; float2 pixels; float scale; uint bands, capacity, newest, full, linear; float ground; };
-    struct Lit { float4 position [[position]]; float4 color; float across; float width; float fade; };
+    struct Lit { float4 position [[position]]; float4 color; float across; float width; float fade; float cover; };
     constant uint sheetEnds[6] = {0, 0, 1, 1, 0, 1};
     constant float sheetTops[6] = {1, 0, 1, 1, 0, 0};
     constant uint lineEnds[6] = {0, 1, 0, 1, 1, 0};
@@ -290,9 +290,11 @@ final class Waterfall {
         out.across = sheetTops[corner];
         out.width = -1;
       }
-      // Down to a fifth of its light at the back of the span. On the fade, not the colour, so rows
-      // stacked edge on stop adding up to white and the dimming shows.
-      out.fade = emerge(t) * (1 - 0.80 * t);
+      // Light falls by the same share each second, to a tenth at the back of the span. Cover does
+      // not: rows stacked edge on settle at their light over their cover, so a fade on both
+      // cancels and the stack stays at full until the last few rows.
+      out.fade = emerge(t) * exp(-2.3 * t);
+      out.cover = emerge(t);
       return out;
     }
     fragment float4 rowLight(Lit in [[stage_in]], constant Frame &f [[buffer(0)]]) {
@@ -309,7 +311,7 @@ final class Waterfall {
       float halo = (0.08 + 0.30 * v) * exp(-4 * d * d / (r * r)) * (1 - smoothstep(0.7 * r, r, d));
       float core = 0.85 * clamp(0.25 * f.scale + 0.5 - abs(in.across), 0.0, 1.0);
       // The halo half covers what lies behind it, so rows stacked edge on stop summing to white.
-      return float4(in.color.rgb * (1.4 * core + halo * 0.7), max(core, 0.5 * halo)) * in.fade;
+      return float4(in.color.rgb * (1.4 * core + halo * 0.7) * in.fade, max(core, 0.5 * halo) * in.cover);
     }
 
     struct Segment { float4 a, b, color; };

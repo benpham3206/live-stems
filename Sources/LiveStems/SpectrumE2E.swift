@@ -20,6 +20,18 @@ enum SpectrumE2E {
         guard levels.min()! < expected - 60 else { throw StemError("Sine \(hz) Hz leaks across the spectrum") }
       }
     }
+    // Rows dim steadily as they recede: past the soft front edge each tenth of the span is darker
+    // than the last, down to under a third of the brightest at the back. No plateau where the glow
+    // sits at full.
+    var fades = [String]()
+    for seconds in [5, 10] {
+      let light = try fadeCurve(seconds: seconds, out: out), front = light.max()!
+      let curve = light.map { String(format: "%.2f", $0) }.joined(separator: " ")
+      guard light[...2].contains(front), light[9] <= 0.3 * front, (3..<10).allSatisfy({ light[$0] <= 0.95 * light[$0 - 1] }) else {
+        throw StemError("At \(seconds) s the glow does not fade steadily with age, front to back: \(curve)")
+      }
+      fades.append("\(seconds) s \(String(format: "%.2f", light[9] / front))")
+    }
     let lag = try clickLag(analyzer)
     _ = try Waterfall()  // the 3D rows need the GPU and their shader to build
     let silent = analyzer.levels([Float](repeating: 0, count: SpectrumAnalyzer.size), log: true)
@@ -148,7 +160,50 @@ enum SpectrumE2E {
     guard timings["push"]! + timings["3d"]! < 0.020, timings["2d"]! < 0.020 else { throw StemError("Spectrum draw too slow: \(timings)") }
     let ms = timings.mapValues { String(format: "%.1f", $0 * 1000) }
     print("PASS spectrum · sines read true at 44.1 and 48 kHz, ms at 2x: p95 push \(ms["push"]!), 3D rows \(ms["3d"]!)"
-      + " (labels \(ms["labels"]!) on turn or resize), 2D \(ms["2d"]!) · click to peak \(lag)")
+      + " (labels \(ms["labels"]!) on turn or resize), 2D \(ms["2d"]!) · click to peak \(lag) · back of span at front's × \(fades.joined(separator: ", "))")
+  }
+
+  /// A steady sound, every row the same, at the reference view: the light along one loud peak
+  /// line, in tenths of the span from front to back. Light is a pixel's brightest channel, 0 to 1:
+  /// a warm glow lives in red, so a red channel stuck at full reads as no dimming at all.
+  static func fadeCurve(seconds: Int, out: URL? = nil) throws -> [Float] {
+    let waterfall = try Waterfall(), full = seconds * SpectrumView.rowsPerSecond
+    waterfall.seconds = seconds
+    waterfall.hues = SpectrumAnalyzer.frequencies(log: true).map { SpectrumView.hue(SpectrumAnalyzer.position($0, log: true)) }
+    // A body at -70 dB under one peak at -6 dB, in the warm orange lows.
+    let peak = 110
+    let row = (0..<SpectrumAnalyzer.bands).map { i -> Float in
+      let d = Float(i - peak) / 6
+      return 10 * log10(pow(10, -7) + pow(10, -0.6) * exp(-d * d))
+    }
+    for _ in 0..<full { waterfall.push(row) }
+    let size = CGSize(width: 1240, height: 616), scale = 2
+    guard let image = waterfall.snapshot(width: Int(size.width) * scale, height: Int(size.height) * scale, scale: Float(scale)),
+      let data = image.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else { throw StemError("The 3D rows did not render") }
+    if let out {
+      try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])!.write(to: out.appendingPathComponent("spectrum-fade-\(seconds)s.png"))
+    }
+    // The 3×3 pixels at a point in view points, y up.
+    func light(_ p: CGPoint) -> Float {
+      let x = Int(p.x * CGFloat(scale)), y = image.height - Int(p.y * CGFloat(scale))
+      var sum: Float = 0
+      for dy in -1...1 { for dx in -1...1 {
+        let o = (y + dy) * image.bytesPerRow + (x + dx) * 4
+        sum += Float(max(bytes[o], bytes[o + 1], bytes[o + 2])) / 255
+      } }
+      return sum / 9
+    }
+    // Across the peak, on the drawn rows only: every other one, as the waterfall picks them.
+    var tenths = [[Float]](repeating: [], count: 10)
+    for age in 0..<full where (full - 1 - age) % 2 == 0 {
+      let t = Float(age) / Float(full - 1)
+      for i in (peak - 8)...(peak + 8) {
+        if let p = waterfall.camera.point([Float(i) / Float(SpectrumAnalyzer.bands - 1), t, (row[i] + 120) / 120], in: size) {
+          tenths[min(9, Int(t * 10))].append(light(p))
+        }
+      }
+    }
+    return tenths.map { $0.reduce(0, +) / Float(max(1, $0.count)) }
   }
 
   /// How long after a click is heard its peak shows in the levels: a 5 kHz band, read the way

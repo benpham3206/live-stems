@@ -252,7 +252,7 @@ final class SpectrumView: NSView {
     (0, (0.70, 0.25, 1.00)), (0.20, (1.00, 0.42, 0.18)), (0.33, (1.00, 0.68, 0.22)), (0.48, (1.00, 0.38, 0.45)),
     (0.60, (0.95, 0.28, 0.85)), (0.75, (0.58, 0.30, 1.00)), (1, (0.25, 0.38, 1.00)),
   ]
-  private static func hue(_ x: CGFloat) -> SIMD4<Float> {
+  static func hue(_ x: CGFloat) -> SIMD4<Float> {
     let hi = hues.firstIndex { $0.0 >= x } ?? hues.count - 1, lo = max(0, hi - 1)
     let a = hues[lo], b = hues[hi], f = b.0 > a.0 ? (x - a.0) / (b.0 - a.0) : 0
     return SIMD4(Float(a.1.0 + (b.1.0 - a.1.0) * f), Float(a.1.1 + (b.1.1 - a.1.1) * f), Float(a.1.2 + (b.1.2 - a.1.2) * f), 1)
