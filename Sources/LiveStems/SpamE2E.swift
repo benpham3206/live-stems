@@ -54,8 +54,8 @@ enum SpamE2E {
     }
     guard last.sessionGeneration == before.sessionGeneration else { throw StemError("Spam restarted the session") }
     guard kill(last.workerPID, 0) == 0 else { throw StemError("Spam left no live worker") }
-    // Rapid source switching: each pick tears down and rebuilds capture and the
-    // worker. Six picks 150 ms apart, ending on the original source.
+    // Rapid source switching: each pick tears down and rebuilds capture; the
+    // loaded worker stays. Six picks 150 ms apart, ending on the original source.
     let original = session.source
     for index in 0..<6 {
       session.setSource(index % 2 == 0 ? AudioSource(bundleID: "com.apple.Music", name: "Music") : original)
@@ -66,6 +66,9 @@ enum SpamE2E {
     let switched = try wait(40) { $0.active && $0.handedOff && $0.workerPID > 0 && $0.acceptedResults >= 10 }
     guard switched.overflowCount == 0, session.source == original else {
       throw StemError("Rapid source switching left a broken session")
+    }
+    guard switched.workerPID == last.workerPID else {
+      throw StemError("Source switching restarted the worker (\(last.workerPID) → \(switched.workerPID))")
     }
     counts["source_switch"] = 6
     let report: [String: Any] = ["status": "pass", "actions": counts,

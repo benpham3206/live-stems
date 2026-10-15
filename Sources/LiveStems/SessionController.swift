@@ -15,6 +15,7 @@ final class SessionController {
     outputOn = false, stemsSelected = true, warmupsLeft = 0
   private var awaitingFirstAudio = false, cutHost = 0.0
   private var takeoverRequestedAt: Double?  // waiting for (or making) a takeover break
+  private var loadedWorker: WorkerClient?  // the worker that finished loading; kept across a source switch
   private var controls = StemControls(), began = 0.0, capturePeak: Float = 0,
     lastCaptureEndHost = 0.0
   private var lastDeviceCheck = 0.0, lastDiagnostics = 0.0, lastStatus = ""
@@ -41,7 +42,7 @@ final class SessionController {
       guard value != self.source else { return }
       self.source = value
       guard self.enabled else { return }
-      self.end("\(value.name) selected")
+      self.end("\(value.name) selected", keepWorker: true)
       self.queue.async { self.start() }
     }
   }
@@ -63,7 +64,11 @@ final class SessionController {
       self.token += 1
       let token = self.token
       self.trace.record(TraceRecord(event: "start", generation: token))
-      self.startProcessor(token: token)
+      // A source switch keeps the loaded worker: no model reload, no second load gap.
+      if let worker = self.worker, worker === self.loadedWorker {
+        self.trace.record(TraceRecord(event: "worker-kept", generation: token, workerPID: worker.pid))
+        self.attach(worker, token: token)
+      } else { self.startProcessor(token: token) }
     }
   }
   private func startProcessor(token: UInt64) {
@@ -79,62 +84,69 @@ final class SessionController {
         }
         do {
           try result.get()
-          self.busy = false
-          let running = worker.runningModel
-          DispatchQueue.main.async { self.onModel?(running) }
-          if let audio = self.audio {
-            self.pipeline?.coolWorker()
-            ls_stems(audio.core, self.stemsSelected ? 1 : 0)
-            self.status(self.pipeline.map(self.mixStatus) ?? "Original mix")
-            return
-          }
-          let audio = try AudioSession(source: self.source)
-          self.audio = audio
-          let pipeline = StemPipeline(core: audio.core!)
-          pipeline.onFailure = { [weak self = self] message in self?.end(message) }
-          pipeline.onTrace = { [weak self = self] value in self?.trace.record(value) }
-          self.pipeline = pipeline
-          self.applyControls()
-          try audio.start()
-          // Hardware startup can block while the tap already captures. Those
-          // samples predate our playback clock and must not become a backlog.
-          pipeline.start(generation: token)
-          pipeline.holdForBreak()
-          audio.discardCapturedAudio()
-          self.busy = false
-          self.began = stemClock()
-          self.lastCaptureEndHost = 0
-          if self.source.isSpotify {
-            let spotify = self.stateSource
-            self.spotify = spotify
-            spotify.start(onSnapshot: { value, host in
-              self.queue.async {
-                guard self.enabled, self.token == token else { return }
-                if self.pipeline?.observe(value, hostTime: host) == true {
-                  self.audio?.discardCapturedAudio(at: host)
-                  self.warmupsLeft = 3
-                  self.cutHost = host
-                  self.awaitingFirstAudio = true
-                  self.capturePeak = 0
-                }
-              }
-            }, onUnavailable: { message in
-              self.queue.async {
-                guard self.enabled, self.token == token else { return }
-                self.pipeline?.lost()
-                self.status(message + " · audio continues")
-              }
-            })
-          }
-          let timer = DispatchSource.makeTimerSource(queue: self.queue)
-          self.timer = timer
-          timer.schedule(deadline: .now(), repeating: .milliseconds(10))
-          timer.setEventHandler { [weak self = self] in self?.tick() }
-          timer.resume()
-          self.status("Original · splitting")
+          self.loadedWorker = worker
+          self.attach(worker, token: token)
         } catch { self.end(error.localizedDescription) }
       }
     }
+  }
+  /// A loaded worker joins the session: a new one, or the one kept across a source switch.
+  private func attach(_ worker: WorkerClient, token: UInt64) {
+    do {
+      self.busy = false
+      let running = worker.runningModel
+      DispatchQueue.main.async { self.onModel?(running) }
+      if let audio = self.audio {
+        self.pipeline?.coolWorker()
+        ls_stems(audio.core, self.stemsSelected ? 1 : 0)
+        self.status(self.pipeline.map(self.mixStatus) ?? "Original mix")
+        return
+      }
+      let audio = try AudioSession(source: self.source)
+      self.audio = audio
+      let pipeline = StemPipeline(core: audio.core!)
+      pipeline.onFailure = { [weak self = self] message in self?.end(message) }
+      pipeline.onTrace = { [weak self = self] value in self?.trace.record(value) }
+      self.pipeline = pipeline
+      self.applyControls()
+      try audio.start()
+      // Hardware startup can block while the tap already captures. Those
+      // samples predate our playback clock and must not become a backlog.
+      pipeline.start(generation: token)
+      pipeline.holdForBreak()
+      audio.discardCapturedAudio()
+      self.busy = false
+      self.began = stemClock()
+      self.lastCaptureEndHost = 0
+      if self.source.isSpotify {
+        let spotify = self.stateSource
+        self.spotify = spotify
+        spotify.start(onSnapshot: { value, host in
+          self.queue.async {
+            guard self.enabled, self.token == token else { return }
+            if self.pipeline?.observe(value, hostTime: host) == true {
+              self.audio?.discardCapturedAudio(at: host)
+              self.warmupsLeft = 3
+              self.cutHost = host
+              self.awaitingFirstAudio = true
+              self.capturePeak = 0
+            }
+          }
+        }, onUnavailable: { message in
+          self.queue.async {
+            guard self.enabled, self.token == token else { return }
+            self.pipeline?.lost()
+            self.status(message + " · audio continues")
+          }
+        })
+      }
+      let timer = DispatchSource.makeTimerSource(queue: self.queue)
+      self.timer = timer
+      timer.schedule(deadline: .now(), repeating: .milliseconds(10))
+      timer.setEventHandler { [weak self = self] in self?.tick() }
+      timer.resume()
+      self.status("Original · splitting")
+    } catch { self.end(error.localizedDescription) }
   }
   private func tick() {
     guard enabled, let audio = audio, let pipeline = pipeline else { return }
@@ -270,12 +282,14 @@ final class SessionController {
     job += 1
     let began = stemClock()
     let jobID = job
+    let token = self.token
     trace.record(TraceRecord(event: warmup ? "warmup-start" : "job-start", generation: pipeline.generation,
       sourceFrame: pipeline.outputPosition, windowStart: window.range.start,
       windowFrames: window.range.count, jobID: jobID, workerPID: worker.pid))
     worker.separate(window, jobID: job) { result in
       self.queue.async {
-        guard self.worker === worker else { return }
+        // A kept worker can answer a job from the session before a source switch.
+        guard self.worker === worker, self.token == token else { return }
         self.busy = false
         guard self.enabled, let current = self.pipeline else { return }
         do {
@@ -391,7 +405,7 @@ final class SessionController {
   private func stopProcessor(_ audio: AudioSession, _ pipeline: StemPipeline) {
     stemsSelected = false
     ls_stems(audio.core, 0)
-    worker?.stop(); worker = nil; busy = false
+    worker?.stop(); worker = nil; loadedWorker = nil; busy = false
     pipeline.resetProcessor()
   }
   private func saveDiagnostics() {
@@ -418,7 +432,7 @@ final class SessionController {
       steadyFallbackFrames: p.steadyFallbackFrames, steadyProvisionalFrames: p.steadyProvisionalFrames
     ).save()
   }
-  private func end(_ message: String) {
+  private func end(_ message: String, keepWorker: Bool = false) {
     let completion = quitCompletion
     quitCompletion = nil
     trace.record(TraceRecord(event: "stop", generation: token, sourceFrame: pipeline?.outputPosition, reason: message))
@@ -436,8 +450,11 @@ final class SessionController {
     saveDiagnostics()
     pipeline = nil
     audio = nil
-    worker?.stop()
-    worker = nil
+    if !keepWorker || worker !== loadedWorker {
+      worker?.stop()
+      worker = nil
+      loadedWorker = nil
+    }
     busy = false
     status(message)
     if let completion {

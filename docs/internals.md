@@ -73,6 +73,9 @@ Follow What's Playing (on by default) polls once a second for regular apps with
 an audio process that runs output (kAudioProcessPropertyIsRunningOutput). The
 newest app that has played for 2 s becomes the source. A manual pick stands until
 an app starts after it. The rule is in `SourceFollower.swift`; stage `follow` checks it.
+A source switch restarts capture, the pipeline, and the takeover, but keeps the
+loaded worker, so the model does not reload. Results from a job sent before the
+switch are dropped. Stage `spam-live` requires the same worker PID after six switches.
 
 The app arms at launch: capture and the worker start, the source stays direct, and
 the pipeline commits nothing (holdForBreak), so waiting cannot fill the queue.
@@ -99,8 +102,8 @@ paused). If no pause arrives within 3 s it takes over anyway, which leaves a
 A change of default output moves the AVAudioEngine output to the new device.
 Capture, the queue, and the delay stay, so no second takeover happens.
 
-Stems (re)enter after on-time results, then fade in over 200 ms. A worker that
-just started (launch, source switch, model change) is cold: Original plays until
+Stems (re)enter after on-time results, then fade in over 200 ms. A new session or
+worker (launch, source switch, model change) starts cold: Original plays until
 three results in a row are on time. After that, one isolated
 coverage gap, a skip, or a wake needs one on-time result, so a single miss
 recovers within the stream stage's 500 ms. A second gap within 2 s needs three
