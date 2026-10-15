@@ -197,6 +197,7 @@ final class SessionController {
           captureHostSeconds: captureHost > 0 ? captureHost : nil,
           renderHostSeconds: renderHost > 0 ? renderHost : nil,
           estimatedCaptureToRenderSeconds: captureHost > 0 && renderHost > 0 ? renderHost - captureHost : nil,
+          outputLatencySeconds: audio.outputLatency,
           hardCuts: pipeline.hardCuts, lateResults: pipeline.lateResults,
           thermalState: ProcessInfo.processInfo.thermalState.rawValue))
       }

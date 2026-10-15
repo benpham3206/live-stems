@@ -183,11 +183,12 @@ def render_html(report, records):
             '<th>frames</th></tr>' + blips + '</table></body></html>')
 
 
-def follow_pairs(directory):
-    """Follow mode with gap/restored pairing for BLIP lines."""
-    path = directory/'live-trace.jsonl'
+def tail_records(path, from_end=False):
+    """Records as the app writes them, across file rotation. `from_end` skips the old ones."""
     print(f'Following {path} (Ctrl-C stops)', flush=True)
-    offset, inode, gap, cuts = 0, None, None, []
+    offset, inode = 0, None
+    if from_end and path.exists():
+        offset, inode = path.stat().st_size, path.stat().st_ino
     while True:
         try:
             stat = path.stat()
@@ -199,48 +200,82 @@ def follow_pairs(directory):
                 offset = handle.tell()
             for line in lines:
                 try:
-                    r = json.loads(line)
+                    yield json.loads(line)
                 except json.JSONDecodeError:
                     break
-                event = r.get('event')
-                if event == 'coverage-gap':
-                    gap = r
-                elif event == 'coverage-restored' and gap is not None:
-                    ms = (r['uptime']-gap['uptime'])*1000
-                    print(f"BLIP {ms:.0f} ms of Original inside stems", flush=True)
-                    gap = None
-                elif event == 'provisional-cover':
-                    print(f"PROVISIONAL stems covering a late result at frame {r.get('sourceFrame')}",
-                          flush=True)
-                elif event == 'partial-late':
-                    print(f"LATE-PARTIAL {r.get('lateFrames', 0)} frames committed early, "
-                          f"suffix kept as stems", flush=True)
-                elif event == 'late-result':
-                    print(f"LATE-DISCARDED {r.get('lateFrames', 0)} frames, fell back", flush=True)
-                elif event == 'source-change':
-                    cuts.append(r)
-                    print(f"SKIP cut at frame {r.get('sourceFrame')}, "
-                          f"{r.get('queuedFrames', 0)} queued frames flushed", flush=True)
-                elif event == 'source-duplicate':
-                    print('SKIP-DUP duplicate notice ignored, no second flush', flush=True)
-                elif event == 'skip-boundary':
-                    tail = (r.get('sourceFrame', 0) or 0)-(r.get('sourceEnd', 0) or 0)
-                    if tail > 0:
-                        print(f"SKIP-BOUNDARY old-track tail {tail/44.1:.0f} ms kept out of context",
-                              flush=True)
-                elif event == 'skip-first-audio':
-                    print(f"SKIP-AUDIO first post-cut audio {(r.get('elapsedSeconds', 0))*1000:.0f} ms "
-                          f"after notice", flush=True)
-                elif event == 'warmup-finish':
-                    print(f"WARMUP {(r.get('elapsedSeconds', 0))*1000:.0f} ms", flush=True)
-                if event == 'coverage-restored' and cuts:
-                    cut = cuts[-1]
-                    if r['uptime']-cut['uptime'] < 8:
-                        print(f"SKIP notice to stems {(r['uptime']-cut['uptime']):.2f} s", flush=True)
-                        cuts.pop()
         except FileNotFoundError:
             pass
         time.sleep(0.5)
+
+
+def delay_line(sample, recent):
+    """One readout: how far the heard frame is behind the same frame in the source app."""
+    lag = sample['estimatedCaptureToRenderSeconds']*1000
+    out = (sample.get('outputLatencySeconds') or 0)*1000
+    blend = sample.get('blend', 0)
+    mode = 'paused  ' if sample.get('paused') else f"stems {blend*100:3.0f}%" if blend > 0 else 'original'
+    window = sorted(recent)
+    # The device's own figure is often near 0 for built-in speakers; it is not added in.
+    return (f"{time.strftime('%H:%M:%S')}  {mode}  {lag:4.0f} ms behind the source app"
+            f"  (output device reports {out:.0f} ms more)"
+            f"  last 30 s p50 {window[len(window)//2]:.0f} max {window[-1]:.0f}")
+
+
+def follow_delay(directory):
+    """Delay mode: one line a second from the render samples."""
+    recent, last = [], 0
+    for r in tail_records(directory/'live-trace.jsonl', from_end=True):
+        if r.get('event') == 'start':
+            recent.clear()
+            print('START new session', flush=True)
+        if r.get('event') != 'sample' or 'estimatedCaptureToRenderSeconds' not in r:
+            continue
+        recent = recent[-119:]+[r['estimatedCaptureToRenderSeconds']*1000]  # 30 s of 4 Hz samples
+        if r['uptime']-last >= 1:
+            last = r['uptime']
+            print(delay_line(r, recent), flush=True)
+
+
+def follow_pairs(directory):
+    """Follow mode with gap/restored pairing for BLIP lines."""
+    gap, cuts = None, []
+    for r in tail_records(directory/'live-trace.jsonl'):
+        event = r.get('event')
+        if event == 'coverage-gap':
+            gap = r
+        elif event == 'coverage-restored' and gap is not None:
+            ms = (r['uptime']-gap['uptime'])*1000
+            print(f"BLIP {ms:.0f} ms of Original inside stems", flush=True)
+            gap = None
+        elif event == 'provisional-cover':
+            print(f"PROVISIONAL stems covering a late result at frame {r.get('sourceFrame')}",
+                  flush=True)
+        elif event == 'partial-late':
+            print(f"LATE-PARTIAL {r.get('lateFrames', 0)} frames committed early, "
+                  f"suffix kept as stems", flush=True)
+        elif event == 'late-result':
+            print(f"LATE-DISCARDED {r.get('lateFrames', 0)} frames, fell back", flush=True)
+        elif event == 'source-change':
+            cuts.append(r)
+            print(f"SKIP cut at frame {r.get('sourceFrame')}, "
+                  f"{r.get('queuedFrames', 0)} queued frames flushed", flush=True)
+        elif event == 'source-duplicate':
+            print('SKIP-DUP duplicate notice ignored, no second flush', flush=True)
+        elif event == 'skip-boundary':
+            tail = (r.get('sourceFrame', 0) or 0)-(r.get('sourceEnd', 0) or 0)
+            if tail > 0:
+                print(f"SKIP-BOUNDARY old-track tail {tail/44.1:.0f} ms kept out of context",
+                      flush=True)
+        elif event == 'skip-first-audio':
+            print(f"SKIP-AUDIO first post-cut audio {(r.get('elapsedSeconds', 0))*1000:.0f} ms "
+                  f"after notice", flush=True)
+        elif event == 'warmup-finish':
+            print(f"WARMUP {(r.get('elapsedSeconds', 0))*1000:.0f} ms", flush=True)
+        if event == 'coverage-restored' and cuts:
+            cut = cuts[-1]
+            if r['uptime']-cut['uptime'] < 8:
+                print(f"SKIP notice to stems {(r['uptime']-cut['uptime']):.2f} s", flush=True)
+                cuts.pop()
 
 
 if __name__ == '__main__':
@@ -248,16 +283,17 @@ if __name__ == '__main__':
     parser.add_argument('--directory', type=Path, default=Path.home()/'Library/Application Support/Live Stems')
     parser.add_argument('--output', type=Path, required=False)
     parser.add_argument('--follow', action='store_true')
+    parser.add_argument('--delay', action='store_true', help='follow the lag behind the source app')
     parser.add_argument('--html', type=Path, required=False)
     args = parser.parse_args()
-    if args.follow:
+    if args.follow or args.delay:
         try:
-            follow_pairs(args.directory)
+            (follow_delay if args.delay else follow_pairs)(args.directory)
         except KeyboardInterrupt:
             pass
     else:
         if args.output is None:
-            parser.error('--output is required without --follow')
+            parser.error('--output is required without --follow or --delay')
         records = read_records([args.directory/'live-trace.previous.jsonl', args.directory/'live-trace.jsonl'])
         worker = read_records([args.directory/'worker-timing.jsonl.1', args.directory/'worker-timing.jsonl'])
         report = summarize(records, worker)

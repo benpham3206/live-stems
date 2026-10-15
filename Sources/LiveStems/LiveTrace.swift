@@ -24,6 +24,7 @@ struct TraceRecord: Codable {
   var captureHostSeconds: Double? = nil
   var renderHostSeconds: Double? = nil
   var estimatedCaptureToRenderSeconds: Double? = nil
+  var outputLatencySeconds: Double? = nil  // render to speaker, as the output device reports it
   var hardCuts: Int? = nil
   var lateResults: Int? = nil
   var lateFrames: Int? = nil

@@ -144,14 +144,21 @@ and one previous file. The trace records timing only; it does not record audio
 or song titles. File writes run outside the audio callback.
 
 Capture-to-render time uses the captured host timestamp and the render callback
-host timestamp. Sample-rate conversion contributes an estimate. Device latency
-is not measured. Track-relative position is also an estimate. The configured
+host timestamp. Sample-rate conversion contributes an estimate. This is how far
+the heard frame is behind the same frame in the source app; Original and stems
+render the same frames, so it is the same for both. Device latency is not
+measured: `outputLatencySeconds` is what the output device reports, near 0 ms for
+built-in speakers. Track-relative position is also an estimate. The configured
 producer buffer is separate from this observed value.
+
+`--delay` prints this lag once a second (mode, lag, 30 s p50 and max), from the
+end of the trace.
 
 ```sh
 tail -f "$HOME/Library/Application Support/Live Stems/live-trace.jsonl"
 python3 outputs/live-stems-source/e2e/trace_report.py --output outputs/live-stems-acceptance/sustained-repair/live-trace-report.json
 python3 outputs/live-stems-source/e2e/trace_report.py --follow
+python3 outputs/live-stems-source/e2e/trace_report.py --delay
 ```
 
 User action logs are also available in Console under subsystem
