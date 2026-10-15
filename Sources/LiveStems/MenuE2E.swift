@@ -182,6 +182,17 @@ enum MenuE2E {
     let cmdW = NSEvent.keyEvent(
       with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: window.windowNumber,
       context: nil, characters: "w", charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 13)!
+    let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled, .closable],
+      backing: .buffered, defer: false)
+    other.isReleasedWhenClosed = false
+    other.orderFront(nil)
+    pump()
+    if NSApp.keyWindow == nil {
+      try require(window.performKeyEquivalent(with: cmdW), "Cmd+W was not handled by the panel")
+      pump()
+      try require(!other.isVisible && window.isVisible, "Cmd+W with no focused window did not close the other window first")
+    }
+    other.close()
     try require(window.performKeyEquivalent(with: cmdW), "Cmd+W was not handled by the panel")
     pump()
     try require(!window.isVisible, "Cmd+W did not close the controls window")

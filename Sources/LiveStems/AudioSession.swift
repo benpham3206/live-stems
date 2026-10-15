@@ -136,17 +136,16 @@ final class AudioSession {
   }
   /// Same matching as `tapBundleIDs`, by process object for the pre-26 include list.
   static func tapProcesses(for bundleID: String) -> [AudioObjectID] {
-    let exact = bundleID.lowercased(), prefix = exact + "."
-    let webKit = bundleID == "com.apple.Safari"
-    return audioProcesses().compactMap { process, bid in
-      let lower = bid.lowercased()
-      let match = lower == exact || lower.hasPrefix(prefix)
-        || (webKit && lower == "com.apple.webkit.gpu")
-      return match ? process : nil
-    }
+    audioProcesses().compactMap { process, bid in belongs(bid, to: bundleID) ? process : nil }
+  }
+  /// The app itself, its helpers, and for Safari the shared WebKit GPU process.
+  static func belongs(_ processBundleID: String, to bundleID: String) -> Bool {
+    let lower = processBundleID.lowercased(), exact = bundleID.lowercased()
+    return lower == exact || lower.hasPrefix(exact + ".")
+      || (bundleID == "com.apple.Safari" && lower == "com.apple.webkit.gpu")
   }
   /// Every audio process object with its bundle ID. Objects without one are skipped.
-  private static func audioProcesses() -> [(AudioObjectID, String)] {
+  static func audioProcesses() -> [(AudioObjectID, String)] {
     var address = audioAddress(kAudioHardwarePropertyProcessObjectList)
     var size: UInt32 = 0
     AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size)
