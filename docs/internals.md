@@ -108,7 +108,7 @@ Capture, the queue, and the delay stay, so no second takeover happens.
 
 Stems (re)enter after on-time results, then fade in over 200 ms. A new session or
 worker (launch, source switch, model change) starts cold: Original plays until
-three results in a row are on time. After that, one isolated
+eight results in a row are on time (about 0.8 s). After that, one isolated
 coverage gap, a skip, or a wake needs one on-time result, so a single miss
 recovers within the stream stage's 500 ms. A second gap within 2 s needs three
 results in a row; a partly late result resets that count. Without the gate,
