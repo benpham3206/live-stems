@@ -150,6 +150,9 @@ enum NativeE2E {
       try MenuE2E.snapshot(out)
     case "spectrum":
       try SpectrumE2E.run(out)
+    case "follow":
+      try SourceFollower.check()
+      print("PASS follow · newest player wins, blips and manual picks hold · playing now: \(SourceFollower.playingApps().values.sorted())")
     case "fader-redraw":
       try FaderRedrawE2E.run()
     case "transitions":

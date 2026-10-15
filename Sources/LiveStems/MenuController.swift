@@ -11,12 +11,18 @@ final class PanelWindow: NSWindow {
       return super.performKeyEquivalent(with: event)
     }
     switch event.charactersIgnoringModifiers {
-    case "w": performClose(nil)
+    case "w": windowToClose.performClose(nil)
     case "q": quit()
     case "1", "2", "3", "4": cycleStem(Int(event.charactersIgnoringModifiers!)! - 1)
     default: return super.performKeyEquivalent(with: event)
     }
     return true
+  }
+  /// Cmd+W closes the focused window. With none focused, another open window
+  /// (the Spectrum Analyzer) closes before the panel.
+  var windowToClose: NSWindow {
+    if let key = NSApp.keyWindow, key.isVisible { return key }
+    return NSApp.windows.first { $0 !== self && $0.isVisible && $0.styleMask.contains(.closable) } ?? self
   }
 }
 
@@ -41,6 +47,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private var sourcePicker: NSPopUpButton { panel.sourcePicker }
   private var active = false, panelRequested = true, controls = StemControls()
   private var meterTimer: Timer?
+  private var followTimer: Timer?
+  private var follower = SourceFollower()
   /// What the worker loaded last; Automatic's pick shows next to it in the Model menu.
   private var runningModel: StemModel?
   override convenience init() {
@@ -134,6 +142,10 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       }
     }
     RunLoop.main.add(meterTimer!, forMode: .common)
+    // E2E controllers (start override) never follow, so a test cannot change the saved source.
+    if start == nil {
+      followTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.follow() }
+    }
     // The first launch shows the controls without making the app frontmost.
     presentWindow(reason: "launch", userInitiated: false)
   }
@@ -204,11 +216,36 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       item.image = icon
       item.state = index > 0 && source == current ? .on : .off
     }
+    sourcePicker.menu!.addItem(.separator())
+    let follow = NSMenuItem(title: "Follow What's Playing", action: #selector(toggleFollow), keyEquivalent: "")
+    follow.target = self
+    follow.state = Self.followsPlaying ? .on : .off
+    sourcePicker.menu!.addItem(follow)
     sourcePicker.selectItem(at: 0)
+  }
+  /// On by default; kept across launches.
+  private static var followsPlaying: Bool {
+    get { UserDefaults.standard.object(forKey: "followPlaying") as? Bool ?? true }
+    set { UserDefaults.standard.set(newValue, forKey: "followPlaying") }
+  }
+  @objc private func toggleFollow() {
+    Self.followsPlaying.toggle()
+    fillSources()
+  }
+  private func follow() {
+    guard Self.followsPlaying else { return }
+    let playing = SourceFollower.playingApps()
+    guard let id = follower.next(current: session.source.bundleID, playing: Set(playing.keys), now: stemClock()),
+      let name = playing[id] else { return }
+    let source = AudioSource(bundleID: id, name: name)
+    AudioSource.saved = source
+    session.setSource(source)
+    fillSources(current: source)
   }
   @objc private func pickSource() {
     guard let item = sourcePicker.selectedItem, let id = item.representedObject as? String else { return }
     let source = AudioSource(bundleID: id, name: item.title)
+    follower.picked(at: stemClock())
     AudioSource.saved = source
     session.setSource(source)
     fillSources(current: source)  // setSource is async; show the pick now

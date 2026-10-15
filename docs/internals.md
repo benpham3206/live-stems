@@ -69,6 +69,11 @@ case-insensitive prefix, e.g. com.google.Chrome.helper), and for Safari the
 shared com.apple.WebKit.GPU process. Spotify alone adds transport notices,
 Apple Events reads, and the self-pause; other apps work from audio alone.
 
+Follow What's Playing (on by default) polls once a second for regular apps with
+an audio process that runs output (kAudioProcessPropertyIsRunningOutput). The
+newest app that has played for 2 s becomes the source. A manual pick stands until
+an app starts after it. The rule is in `SourceFollower.swift`; stage `follow` checks it.
+
 The app arms at launch: capture and the worker start, the source stays direct, and
 the pipeline commits nothing (holdForBreak), so waiting cannot fill the queue.
 A session takes over as soon as it starts, whatever the mix, so a later mix
