@@ -83,6 +83,7 @@ final class SessionController {
           let running = worker.runningModel
           DispatchQueue.main.async { self.onModel?(running) }
           if let audio = self.audio {
+            self.pipeline?.coolWorker()
             ls_stems(audio.core, self.stemsSelected ? 1 : 0)
             self.status(self.pipeline.map(self.mixStatus) ?? "Original mix")
             return

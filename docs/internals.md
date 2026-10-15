@@ -92,14 +92,16 @@ a quiet moment, at most 3 s later.
 If stems are wanted before any break and the source is Spotify, the session makes one: it sends Spotify
 "pause" over Apple Events, takes over when the paused state arrives, and sends
 "play" (always, even if the pause notice never came, so Spotify is never left
-paused). If no pause arrives within 2 s it takes over anyway, which leaves a
+paused). If no pause arrives within 3 s it takes over anyway, which leaves a
 0.3 s gap and never a replay. An earlier time-stretch ease (AVAudioUnitTimePitch,
 6 % then 1.5 %) was audible, especially on Bluetooth, and was removed.
 
 A change of default output moves the AVAudioEngine output to the new device.
 Capture, the queue, and the delay stay, so no second takeover happens.
 
-Stems (re)enter after on-time results, then fade in over 200 ms. One isolated
+Stems (re)enter after on-time results, then fade in over 200 ms. A worker that
+just started (launch, source switch, model change) is cold: Original plays until
+three results in a row are on time. After that, one isolated
 coverage gap, a skip, or a wake needs one on-time result, so a single miss
 recovers within the stream stage's 500 ms. A second gap within 2 s needs three
 results in a row; a partly late result resets that count. Without the gate,

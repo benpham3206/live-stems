@@ -164,6 +164,7 @@ enum NativeE2E {
     case "fades":
       print("PASS fades · \(try StreamMixerChecks.fades())")
     case "flutter":
+      try StemEntryGate.check()
       let report = try StreamMixerChecks.flutter()
       try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
         .write(to: out.appendingPathComponent("flutter.json"))

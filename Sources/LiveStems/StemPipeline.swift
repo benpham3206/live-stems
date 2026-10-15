@@ -199,6 +199,8 @@ final class StemPipeline {
     provisional = nil; wasProvisional = false; tailScanning = false
     onTrace?(TraceRecord(event: "processor-reset", generation: generation, sourceFrame: outputPosition))
   }
+  /// A new worker started: stems wait for a full on-time streak.
+  func coolWorker() { gate.cool() }
   /// E2E fixtures that test seams, not entry, start with stems already admitted.
   func e2eOpenStemGate() { gate.openForTest() }
   /// Spotify's own fades, measured with skip-probe: gain (1 - t/T)^4 from the
