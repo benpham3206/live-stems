@@ -79,10 +79,12 @@ switch are dropped. Stage `spam-live` requires the same worker PID after six swi
 
 The app arms at launch: capture and the worker start, the source stays direct, and
 the pipeline commits nothing (holdForBreak), so waiting cannot fill the queue.
-A session takes over as soon as it starts, whatever the mix, so a later mix
-change never has to (a takeover on the first mute was heard as a skip). It uses
-a break if one is at hand: while Spotify is paused (silent), a track change or
-seek notice, or 250 ms of quiet capture. Takeover discards everything already heard, so
+A session takes over only once the mix differs from Original at full volume.
+Until then the source plays direct, so with a neutral mix every app (Spotify and
+Chrome together, say) plays untouched, and a Follow switch moves only capture. A
+takeover that has begun always finishes, so Spotify is never left self-paused.
+It uses a break if one is at hand: while Spotify is paused (silent), a track
+change or seek notice within one lag of it, or 250 ms of quiet capture. Takeover discards everything already heard, so
 playback resumes from that point after the steady lag and nothing repeats; the
 shift lands on silence or a fresh start. Quit before takeover ends at once.
 

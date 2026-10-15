@@ -189,7 +189,9 @@ final class SessionController {
         finishQuit()
         return
       }
-      if !outputOn { try takeOverIfReady(audio, pipeline) }
+      // Until the mix differs from Original the source plays direct, beside any
+      // other app. A takeover already begun (Spotify self-paused) always finishes.
+      if !outputOn, takeoverRequestedAt != nil || mixChangesSource { try takeOverIfReady(audio, pipeline) }
       startJob()
       startWarmup()
       guard enabled else { return }
@@ -231,8 +233,10 @@ final class SessionController {
     if pipeline.paused { return ls_queued(audio.core) == 0 }
     return spotify == nil && (pipeline.quietFrames >= 11025 || stemClock() - quitStarted > 3)
   }
-  /// A session takes over from the source app as soon as it starts (the app
-  /// starts one at launch), so a later mix change never has to. It uses a
+  /// The mix is not Original at full volume: Live Stems must play the source.
+  private var mixChangesSource: Bool { stemsSelected && controls.effectiveGains.contains { $0 != 1 } }
+  /// A session takes over from the source app once the mix differs from
+  /// Original; until then the source plays direct. It uses a
   /// break where the 0.3 s shift is silent: a pause, a skip or seek (Spotify
   /// notices), or 250 ms of quiet audio (any app). With none at hand, Spotify is
   /// paused for a blink; other apps get up to 3 s to go quiet, then a dip (a
