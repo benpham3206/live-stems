@@ -214,6 +214,7 @@ and switching headphones or speakers keeps Live Stems running.
   *Fine-tuned* is cleaner; *Standard* is lighter. The music keeps playing while the model reloads.
 - **Change the source** at any time in the source menu; Live Stems restarts on the new app.
 - **Follow What's Playing** (in the source menu, on by default) switches the source to the app that starts playing. If two apps play, the newer one wins.
+- **⌘5** cycles the Spectrum Analyzer: off, 3D, 2D, off.
 - **⌘W** closes the window in front. If no window is in front, the Spectrum Analyzer closes before the panel.
 - **Quit Live Stems** resets the mix and hands the sound back to the app at the next pause or quiet
   moment, so your music never cuts out.

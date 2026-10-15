@@ -2,7 +2,8 @@ import AppKit
 
 /// The Spectrum Analyzer window: a toolbar row like the panel's, and the plot.
 final class SpectrumWindowController: NSObject, NSWindowDelegate {
-  let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1240, height: 724),
+  /// A PanelWindow, so Cmd+W, Cmd+Q, Cmd+1-5 work while it is in front, with or without the panel.
+  let window = PanelWindow(contentRect: NSRect(x: 0, y: 0, width: 1240, height: 724),
     styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
   let view = SpectrumView()
   private var analyzer = SpectrumAnalyzer()
@@ -121,6 +122,19 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     // 30 rows a second while open; nothing runs while closed.
     timer = Timer(timeInterval: 1.0 / Double(SpectrumView.rowsPerSecond), repeats: true) { [weak self] _ in self?.tick() }
     RunLoop.main.add(timer!, forMode: .common)
+  }
+  /// Cmd+5: closed, then 3D, then 2D, then closed.
+  func cycle() {
+    if !window.isVisible {
+      mode.selectedIndex = 0
+      changeMode()
+      show()
+    } else if view.threeD {
+      mode.selectedIndex = 1
+      changeMode()
+    } else {
+      window.performClose(nil)
+    }
   }
   func windowWillClose(_ notification: Notification) {
     timer?.invalidate()

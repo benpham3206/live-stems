@@ -285,6 +285,27 @@ enum MenuE2E {
       try require(mute.state == .off, "\(name) left muted")
     }
     checks.append(["name": "cmd_1_to_4_cycle_stems"])
+    // Cmd+5 steps the spectrum through closed, 3D, 2D, closed.
+    var views = [String]()
+    for _ in 0..<4 {
+      try require(window.performKeyEquivalent(with: command("5")), "Cmd+5 was not handled")
+      pump()
+      let spectrum = NSApp.windows.first { $0.title == "Spectrum Analyzer" }
+      let view = spectrum.flatMap { descendants(of: $0.contentView!).compactMap { $0 as? SpectrumView }.first }
+      views.append(spectrum?.isVisible != true ? "off" : view?.threeD == true ? "3D" : "2D")
+    }
+    try require(views == ["3D", "2D", "off", "3D"], "Cmd+5 cycled the spectrum as \(views)")
+    // From the spectrum window itself, with the panel closed.
+    window.performClose(nil)
+    let spectrum = NSApp.windows.first { $0.title == "Spectrum Analyzer" }!
+    try require(spectrum.performKeyEquivalent(with: command("5")) && spectrum.isVisible, "Cmd+5 in the spectrum window did not go to 2D")
+    try require(spectrum.performKeyEquivalent(with: command("5")), "Cmd+5 in the spectrum window was not handled")
+    pump()
+    try require(!spectrum.isVisible, "Cmd+5 in the spectrum window did not close it after 2D")
+    controller.appActivated()
+    pump()
+    NSApp.windows.first { $0.title == "Spectrum Analyzer" }?.close()
+    checks.append(["name": "cmd_5_cycles_spectrum"])
     // Switching to another app hides the panel; the toggle keeps it up.
     Visibility.reset()
     defer { Visibility.reset() }

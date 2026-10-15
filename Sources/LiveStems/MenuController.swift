@@ -1,11 +1,12 @@
 import AppKit
 import OSLog
 
-/// The app has no menu bar to carry Cmd+W (close), Cmd+Q (quit) and Cmd+1-4
-/// (cycle a stem), so the panel handles them itself.
+/// The app has no menu bar to carry Cmd+W (close), Cmd+Q (quit), Cmd+1-4
+/// (cycle a stem) and Cmd+5 (cycle the spectrum), so the panel handles them itself.
 final class PanelWindow: NSWindow {
   var quit: () -> Void = {}
   var cycleStem: (Int) -> Void = { _ in }
+  var cycleSpectrum: () -> Void = {}
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     guard event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {
       return super.performKeyEquivalent(with: event)
@@ -14,6 +15,7 @@ final class PanelWindow: NSWindow {
     case "w": windowToClose.performClose(nil)
     case "q": quit()
     case "1", "2", "3", "4": cycleStem(Int(event.charactersIgnoringModifiers!)! - 1)
+    case "5": cycleSpectrum()
     default: return super.performKeyEquivalent(with: event)
     }
     return true
@@ -41,9 +43,15 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     defer: false)
   private let windowLog = Logger(subsystem: "com.benpham.livestems", category: "Windowing")
   private let panel = ControlsPanel()
-  private lazy var spectrum = SpectrumWindowController(read: { [weak self] done in
-    self?.session.takeScope(frames: SpectrumAnalyzer.size, done)
-  }, settings: { [weak self] in self?.modelMenu() ?? NSMenu() })
+  private lazy var spectrum: SpectrumWindowController = {
+    let spectrum = SpectrumWindowController(read: { [weak self] done in
+      self?.session.takeScope(frames: SpectrumAnalyzer.size, done)
+    }, settings: { [weak self] in self?.modelMenu() ?? NSMenu() })
+    spectrum.window.quit = window.quit
+    spectrum.window.cycleStem = window.cycleStem
+    spectrum.window.cycleSpectrum = window.cycleSpectrum
+    return spectrum
+  }()
   private var sourcePicker: NSPopUpButton { panel.sourcePicker }
   private var active = false, panelRequested = true, controls = StemControls()
   private var meterTimer: Timer?
@@ -71,6 +79,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     window.delegate = self
     window.quit = { [weak self] in self?.quitApp() }
     window.cycleStem = { [weak self] in self?.cycleStem($0) }
+    window.cycleSpectrum = { [weak self] in self?.spectrum.cycle() }
     window.level = .floating
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
