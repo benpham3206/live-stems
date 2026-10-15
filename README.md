@@ -7,6 +7,10 @@ other app is playing. Nothing is downloaded, prepared or saved: the separation h
 
 ![The Live Stems panel](docs/panel.png)
 
+![The 3D spectrum: a rolling waterfall, newest moment in front](docs/spectrum-3d.png)
+
+![The 2D spectrum: bars, outline and a scrolling spectrogram](docs/spectrum-2d.png)
+
 Live Stems sits in your menu bar. Its panel has:
 
 - a **source menu**: pick the app whose audio you want to split,
