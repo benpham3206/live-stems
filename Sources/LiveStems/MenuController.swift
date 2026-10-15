@@ -360,9 +360,13 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   @objc private func statusClicked() {
     let event = NSApp.currentEvent
     guard event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true else { return showPanel() }
-    item.menu = statusMenu()
-    item.button?.performClick(nil)
-    item.menu = nil
+    // A Dock (regular) app's menus never present on another app's full-screen
+    // Space; an accessory app's do. Be accessory while the menu is open (popUp
+    // blocks until it closes), then restore the Dock setting.
+    guard let button = item.button else { return }
+    if Visibility.dock { setPolicy(.accessory) }
+    statusMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
+    if Visibility.dock { setPolicy(.regular) }
   }
   /// The right-click menu: dockMenu items, a separator, then Quit last.
   func statusMenu() -> NSMenu {
