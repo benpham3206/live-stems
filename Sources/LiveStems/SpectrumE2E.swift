@@ -45,7 +45,7 @@ enum SpectrumE2E {
     controller.window.setContentSize(NSSize(width: 1240, height: 724))
     controller.window.contentView?.layoutSubtreeIfNeeded()
     var generator = SystemRandomNumberGenerator()
-    var pushSeconds = [Double](), last = ([Float](), [Float]())
+    var pushSeconds = [Double](), last = ([Float](), [Float]()), halfVocals = [Float]()
     let progression: [[Float]] = [[0, 4, 7, 11], [5, 9, 12, 16], [7, 11, 14, 17], [-3, 0, 4, 7]]
     for frame in 0..<(view.seconds * SpectrumView.rowsPerSecond) {
       let time = Float(frame) / Float(SpectrumView.rowsPerSecond)
@@ -57,7 +57,7 @@ enum SpectrumE2E {
       let stab = 0.6 * breakdown * exp(-time.truncatingRemainder(dividingBy: 0.625) * 12), pluck = 0.08 * exp(-time.truncatingRemainder(dividingBy: 0.25) * 25)
       let swell = 0.06 + 0.04 * sin(time * 2.3)  // the room swells and settles
       // The original has a sung line; what you hear has it muted, as with Vocals muted.
-      var heard = [Float](), song = [Float](), hiss: Float = 0, warm: Float = 0, dark: Float = 0, rumble: Float = 0
+      var heard = [Float](), song = [Float](), half = [Float](), hiss: Float = 0, warm: Float = 0, dark: Float = 0, rumble: Float = 0
       let note = 392 * pow(2, Float([0, 2, 4, 7, 4, 2][Int(time / 0.4) % 6]) / 12)
       for n in 0..<SpectrumAnalyzer.size {
         let t = Float(n) / analyzer.rate + time, noise = Float.random(in: -1...1, using: &generator)
@@ -81,11 +81,13 @@ enum SpectrumE2E {
         for h in 1...20 where note * Float(h) < 16000 { voice += 0.12 / Float(h) * sin(sung * Float(h)) }
         heard.append(x)
         song.append(x + voice)
+        half.append(x + 0.5 * voice)
       }
       let levels = (analyzer.levels(heard, log: true), analyzer.levels(song, log: true)), began = stemClock()
       view.push(heard: levels.0, original: levels.1)
       pushSeconds.append(stemClock() - began)
       last = levels
+      halfVocals = analyzer.levels(half, log: true)
     }
     var timings = ["push": pushSeconds.sorted()[pushSeconds.count * 95 / 100]]
     func png(_ image: CGImage, _ name: String) throws {
@@ -127,7 +129,7 @@ enum SpectrumE2E {
     NSGraphicsContext.current = NSGraphicsContext(cgContext: flat, flipped: false)
     drawn = 0
     for _ in 0..<5 {
-      view.push(heard: last.0, original: last.1)
+      view.push(heard: halfVocals, original: last.1)
       let began = stemClock()
       view.draw(view.bounds)
       flat.flush()
@@ -135,6 +137,7 @@ enum SpectrumE2E {
     }
     NSGraphicsContext.restoreGraphicsState()
     timings["2d"] = drawn / 5
+    // The 2D picture plays the vocals at half level, so the bars show colour against the song's outline.
     try png(flat.makeImage()!, "spectrum-2d.png")
     // The whole window, toolbar included, over a dusk-blue stand-in for the desktop behind the
     // glass, which renders opaque grey off screen; the 3D view drawn off screen in its place.
