@@ -5,19 +5,26 @@
 /// fade in over `fade` frames. One isolated miss, a skip, or a wake needs one
 /// on-time result; a second miss within `repeatWindow` frames means the model
 /// is struggling, so `streak` results in a row are needed and stems stay out
-/// instead of flickering against Original.
+/// instead of flickering against Original. A worker that just started (launch,
+/// source switch, model change) is cold: its first entry needs `coldStreak`, so
+/// Original plays until the model has proven it keeps up.
 struct StemEntryGate {
-  let fade = 8820, fadeOut = 882, streak = 3, repeatWindow = 88200
-  private var closed = true, entering = false, onTime = 0, needed = 1, lastGap = Int.min / 2
+  // About 0.8 s of on-time results at the 100 ms hop before a cold entry.
+  static let coldStreak = 8
+  let fade = 8820, fadeOut = 882, streak = 3, coldStreak = Self.coldStreak, repeatWindow = 88200
+  private var closed = true, entering = false, onTime = 0, needed = Self.coldStreak, lastGap = Int.min / 2
+  private var warm = false
 
-  /// A skip, seek, wake, or processor reset: fresh context, quick re-entry.
-  mutating func reset() { closed = true; entering = false; onTime = 0; needed = 1 }
+  /// A skip, seek, wake, or processor reset: fresh context, quick re-entry once warm.
+  mutating func reset() { closed = true; entering = false; onTime = 0; needed = warm ? 1 : coldStreak }
+  /// A new worker or session: the next entry waits for a full cold streak.
+  mutating func cool() { warm = false; reset() }
   var isOpen: Bool { !closed }
   /// Stem data is about to run out (or did).
   mutating func miss(at frame: Int) {
     let repeated = frame - lastGap < repeatWindow
     reset()
-    if repeated { needed = streak }
+    if repeated { needed = max(needed, streak) }
     lastGap = frame
   }
   /// A result arrived partly late: it breaks an on-time streak, nothing more.
@@ -25,7 +32,7 @@ struct StemEntryGate {
   /// A result arrived with its whole core before the playback deadline.
   mutating func onTimeResult() {
     onTime += 1
-    if closed, onTime >= needed { closed = false; entering = true }
+    if closed, onTime >= needed { closed = false; entering = true; warm = true }
   }
   /// The next stem weight for a frame that has stem data. Closed: fade out.
   /// Entering: fade in. Otherwise the caller's seam blend (`seamStep` per frame).
@@ -39,5 +46,23 @@ struct StemEntryGate {
     return current + max(-seamStep, min(seamStep, target - current))
   }
   /// E2E fixtures that test seams, not entry, start with stems already admitted.
-  mutating func openForTest() { closed = false; entering = false; onTime = streak }
+  mutating func openForTest() { closed = false; entering = false; onTime = streak; warm = true }
+
+  /// Cold entry needs a full streak; once warm, a skip needs one result; a new worker is cold again.
+  static func check() throws {
+    func entry(_ gate: inout StemEntryGate) -> Int {
+      for n in 1...20 { gate.onTimeResult(); if gate.isOpen { return n } }
+      return 0
+    }
+    var gate = StemEntryGate()
+    let cold = entry(&gate)
+    gate.reset()
+    let skip = entry(&gate)
+    gate.cool()
+    gate.miss(at: 0); gate.miss(at: 100)  // repeated misses on a cold worker keep the cold streak
+    let restarted = entry(&gate)
+    guard (cold, skip, restarted) == (coldStreak, 1, coldStreak) else {
+      throw StemError("Gate entry after cold, skip, new worker: \(cold), \(skip), \(restarted); expected \(coldStreak), 1, \(coldStreak)")
+    }
+  }
 }

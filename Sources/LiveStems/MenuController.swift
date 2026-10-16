@@ -57,6 +57,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private var meterTimer: Timer?
   private var followTimer: Timer?
   private var follower = SourceFollower()
+  private var activationObserver: NSObjectProtocol?
+  /// The last app in front before Live Stems.
+  private var lastOtherApp: String?
   /// What the worker loaded last; Automatic's pick shows next to it in the Model menu.
   private var runningModel: StemModel?
   override convenience init() {
@@ -154,6 +157,12 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     // E2E controllers (start override) never follow, so a test cannot change the saved source.
     if start == nil {
       followTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.follow() }
+      let center = NSWorkspace.shared.notificationCenter
+      activationObserver = center.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
+        object: nil, queue: .main) { [weak self] note in
+        let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        self?.activated(app?.bundleIdentifier)
+      }
     }
     // The first launch shows the controls without making the app frontmost.
     presentWindow(reason: "launch", userInitiated: false)
@@ -225,11 +234,6 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       item.image = icon
       item.state = index > 0 && source == current ? .on : .off
     }
-    sourcePicker.menu!.addItem(.separator())
-    let follow = NSMenuItem(title: "Follow What's Playing", action: #selector(toggleFollow), keyEquivalent: "")
-    follow.target = self
-    follow.state = Self.followsPlaying ? .on : .off
-    sourcePicker.menu!.addItem(follow)
     sourcePicker.selectItem(at: 0)
   }
   /// On by default; kept across launches.
@@ -237,16 +241,26 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     get { UserDefaults.standard.object(forKey: "followPlaying") as? Bool ?? true }
     set { UserDefaults.standard.set(newValue, forKey: "followPlaying") }
   }
-  @objc private func toggleFollow() {
-    Self.followsPlaying.toggle()
-    fillSources()
-  }
+  @objc private func toggleFollow() { Self.followsPlaying.toggle() }
   private func follow() {
     guard Self.followsPlaying else { return }
     let playing = SourceFollower.playingApps()
     guard let id = follower.next(current: session.source.bundleID, playing: Set(playing.keys), now: stemClock()),
       let name = playing[id] else { return }
     let source = AudioSource(bundleID: id, name: name)
+    AudioSource.saved = source
+    session.setSource(source)
+    fillSources(current: source)
+  }
+  /// Coming to Live Stems from a playing app makes that app the source (a manual pick).
+  private func activated(_ id: String?) {
+    guard id == Bundle.main.bundleIdentifier else { lastOtherApp = id; return }
+    guard Self.followsPlaying else { return }
+    let playing = SourceFollower.playingApps()
+    guard let pick = SourceFollower.cameFrom(lastOtherApp, current: session.source.bundleID,
+      playing: Set(playing.keys)), let name = playing[pick] else { return }
+    let source = AudioSource(bundleID: pick, name: name)
+    follower.picked(at: stemClock())
     AudioSource.saved = source
     session.setSource(source)
     fillSources(current: source)
@@ -338,9 +352,13 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   @objc private func statusClicked() {
     let event = NSApp.currentEvent
     guard event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true else { return showPanel() }
-    item.menu = statusMenu()
-    item.button?.performClick(nil)
-    item.menu = nil
+    // A Dock (regular) app's menus never present on another app's full-screen
+    // Space; an accessory app's do. Be accessory while the menu is open (popUp
+    // blocks until it closes), then restore the Dock setting.
+    guard let button = item.button else { return }
+    if Visibility.dock { setPolicy(.accessory) }
+    statusMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.maxY + 4), in: button)
+    if Visibility.dock { setPolicy(.regular) }
   }
   /// The right-click menu: dockMenu items, a separator, then Quit last.
   func statusMenu() -> NSMenu {
@@ -363,7 +381,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   func dockMenu() -> NSMenu {
     let menu = NSMenu()
     for (title, action) in [("Show in Dock", #selector(toggleDock)), ("Show in Menu Bar", #selector(toggleMenuBar)),
-      ("Hide When Switching Apps", #selector(toggleHideWhenInactive))] {
+      ("Hide When Switching Apps", #selector(toggleHideWhenInactive)),
+      ("Follow What's Playing", #selector(toggleFollow))] {
       let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
       entry.target = self
       menu.addItem(entry)
@@ -412,6 +431,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   @objc private func toggleHideWhenInactive() { Visibility.hideWhenInactive.toggle() }
   func validateMenuItem(_ entry: NSMenuItem) -> Bool {
     switch entry.action {
+    case #selector(toggleFollow):
+      entry.state = Self.followsPlaying ? .on : .off
+      return true
     case #selector(pickModel(_:)):
       let model = StemModel(rawValue: entry.representedObject as? String ?? "") ?? .automatic
       entry.state = model == StemModel.saved ? .on : .off

@@ -69,17 +69,24 @@ case-insensitive prefix, e.g. com.google.Chrome.helper), and for Safari the
 shared com.apple.WebKit.GPU process. Spotify alone adds transport notices,
 Apple Events reads, and the self-pause; other apps work from audio alone.
 
-Follow What's Playing (on by default) polls once a second for regular apps with
+Follow What's Playing (on by default; in the right-click and Dock menus) polls once a second for regular apps with
 an audio process that runs output (kAudioProcessPropertyIsRunningOutput). The
 newest app that has played for 2 s becomes the source. A manual pick stands until
-an app starts after it. The rule is in `SourceFollower.swift`; stage `follow` checks it.
+an app starts after it. Activating Live Stems from a playing app is such a pick
+(`SourceFollower.cameFrom`, fed by NSWorkspace activation notices): the app you
+came from becomes the source. The rule is in `SourceFollower.swift`; stage `follow` checks it.
+A source switch restarts capture, the pipeline, and the takeover, but keeps the
+loaded worker, so the model does not reload. Results from a job sent before the
+switch are dropped. Stage `spam-live` requires the same worker PID after six switches.
 
 The app arms at launch: capture and the worker start, the source stays direct, and
 the pipeline commits nothing (holdForBreak), so waiting cannot fill the queue.
-A session takes over as soon as it starts, whatever the mix, so a later mix
-change never has to (a takeover on the first mute was heard as a skip). It uses
-a break if one is at hand: while Spotify is paused (silent), a track change or
-seek notice, or 250 ms of quiet capture. Takeover discards everything already heard, so
+A session takes over only once the mix differs from Original at full volume.
+Until then the source plays direct, so with a neutral mix every app (Spotify and
+Chrome together, say) plays untouched, and a Follow switch moves only capture. A
+takeover that has begun always finishes, so Spotify is never left self-paused.
+It uses a break if one is at hand: while Spotify is paused (silent), a track
+change or seek notice within one lag of it, or 250 ms of quiet capture. Takeover discards everything already heard, so
 playback resumes from that point after the steady lag and nothing repeats; the
 shift lands on silence or a fresh start. Quit before takeover ends at once.
 
@@ -92,14 +99,16 @@ a quiet moment, at most 3 s later.
 If stems are wanted before any break and the source is Spotify, the session makes one: it sends Spotify
 "pause" over Apple Events, takes over when the paused state arrives, and sends
 "play" (always, even if the pause notice never came, so Spotify is never left
-paused). If no pause arrives within 2 s it takes over anyway, which leaves a
+paused). If no pause arrives within 3 s it takes over anyway, which leaves a
 0.3 s gap and never a replay. An earlier time-stretch ease (AVAudioUnitTimePitch,
 6 % then 1.5 %) was audible, especially on Bluetooth, and was removed.
 
 A change of default output moves the AVAudioEngine output to the new device.
 Capture, the queue, and the delay stay, so no second takeover happens.
 
-Stems (re)enter after on-time results, then fade in over 200 ms. One isolated
+Stems (re)enter after on-time results, then fade in over 200 ms. A new session or
+worker (launch, source switch, model change) starts cold: Original plays until
+eight results in a row are on time (about 0.8 s). After that, one isolated
 coverage gap, a skip, or a wake needs one on-time result, so a single miss
 recovers within the stream stage's 500 ms. A second gap within 2 s needs three
 results in a row; a partly late result resets that count. Without the gate,

@@ -25,12 +25,15 @@ final class StemPipeline {
   private(set) var resting = false
   // Until takeover the listener hears Spotify directly and nothing is queued.
   // A pause, skip, or seek is a break where the 0.3 s shift cannot be heard.
-  private(set) var outputLive = true, breakPending = false
+  private(set) var outputLive = true
+  // A break counts only within one lag of it: the shift must land on it, not minutes later.
+  private var breakFrame = Int.min / 2
+  var breakPending: Bool { end - breakFrame <= lagFrames }
   /// How long the captured audio has been quiet, in frames, up to the newest frame.
   private(set) var quietFrames = 0
   private var dipFade = 0..<0
   /// The live session holds output for a break; fixtures keep committing at once.
-  func holdForBreak() { outputLive = false; breakPending = false }
+  func holdForBreak() { outputLive = false; breakFrame = Int.min / 2 }
   /// When stems may play after a gap; see StemEntryGate.
   private(set) var gate = StemEntryGate()
   var timings = [Double]()
@@ -146,7 +149,7 @@ final class StemPipeline {
     }
     let changedPause = paused != !value.isPlaying
     paused = !value.isPlaying
-    if cut || (changedPause && paused) { breakPending = true }
+    if cut || (changedPause && paused) { breakFrame = end }
     if cut {
       // The notice and the poll can disagree for ~1 s around one transition
       // (duplicate notice, stale old-track read). A second cut naming either
@@ -199,6 +202,8 @@ final class StemPipeline {
     provisional = nil; wasProvisional = false; tailScanning = false
     onTrace?(TraceRecord(event: "processor-reset", generation: generation, sourceFrame: outputPosition))
   }
+  /// A new worker started: stems wait for a full on-time streak.
+  func coolWorker() { gate.cool() }
   /// E2E fixtures that test seams, not entry, start with stems already admitted.
   func e2eOpenStemGate() { gate.openForTest() }
   /// Spotify's own fades, measured with skip-probe: gain (1 - t/T)^4 from the
@@ -383,7 +388,7 @@ final class StemPipeline {
     // A dip (no quiet moment came) resumes with a 50 ms fade instead of a hard start.
     dipFade = fadeIn ? end..<(end + 2205) : 0..<0
     ls_flush_output(core)
-    outputLive = true; breakPending = false
+    outputLive = true; breakFrame = Int.min / 2
     onTrace?(TraceRecord(event: "takeover-break", generation: generation, sourceFrame: outputPosition))
   }
   func step() {
