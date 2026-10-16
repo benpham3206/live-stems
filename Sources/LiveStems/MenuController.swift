@@ -234,11 +234,6 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       item.image = icon
       item.state = index > 0 && source == current ? .on : .off
     }
-    sourcePicker.menu!.addItem(.separator())
-    let follow = NSMenuItem(title: "Follow What's Playing", action: #selector(toggleFollow), keyEquivalent: "")
-    follow.target = self
-    follow.state = Self.followsPlaying ? .on : .off
-    sourcePicker.menu!.addItem(follow)
     sourcePicker.selectItem(at: 0)
   }
   /// On by default; kept across launches.
@@ -246,10 +241,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     get { UserDefaults.standard.object(forKey: "followPlaying") as? Bool ?? true }
     set { UserDefaults.standard.set(newValue, forKey: "followPlaying") }
   }
-  @objc private func toggleFollow() {
-    Self.followsPlaying.toggle()
-    fillSources()
-  }
+  @objc private func toggleFollow() { Self.followsPlaying.toggle() }
   private func follow() {
     guard Self.followsPlaying else { return }
     let playing = SourceFollower.playingApps()
@@ -389,7 +381,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   func dockMenu() -> NSMenu {
     let menu = NSMenu()
     for (title, action) in [("Show in Dock", #selector(toggleDock)), ("Show in Menu Bar", #selector(toggleMenuBar)),
-      ("Hide When Switching Apps", #selector(toggleHideWhenInactive))] {
+      ("Hide When Switching Apps", #selector(toggleHideWhenInactive)),
+      ("Follow What's Playing", #selector(toggleFollow))] {
       let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
       entry.target = self
       menu.addItem(entry)
@@ -438,6 +431,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   @objc private func toggleHideWhenInactive() { Visibility.hideWhenInactive.toggle() }
   func validateMenuItem(_ entry: NSMenuItem) -> Bool {
     switch entry.action {
+    case #selector(toggleFollow):
+      entry.state = Self.followsPlaying ? .on : .off
+      return true
     case #selector(pickModel(_:)):
       let model = StemModel(rawValue: entry.representedObject as? String ?? "") ?? .automatic
       entry.state = model == StemModel.saved ? .on : .off

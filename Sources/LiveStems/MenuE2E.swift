@@ -325,7 +325,7 @@ enum MenuE2E {
     Visibility.reset()
     defer { Visibility.reset() }
     let toggles = controller.dockMenu().items
-    try require(toggles.map(\.title) == ["Show in Dock", "Show in Menu Bar", "Hide When Switching Apps", "", "Model"], "Visibility menu items changed")
+    try require(toggles.map(\.title) == ["Show in Dock", "Show in Menu Bar", "Hide When Switching Apps", "Follow What's Playing", "", "Model"], "Visibility menu items changed")
     try require(toggles.last?.submenu?.items.count == StemModel.allCases.count, "Model menu lists every model")
     try require(toggles.prefix(3).allSatisfy { controller.validateMenuItem($0) && $0.state == .on }, "All toggles start on and enabled")
     _ = NSApp.sendAction(toggles[0].action!, to: toggles[0].target, from: toggles[0])
@@ -345,6 +345,8 @@ enum MenuE2E {
     try require(statusQuit.title == "Quit Live Stems", "Status menu does not end with Quit Live Stems")
     try require(statusQuit.target as AnyObject? === controller, "Quit Live Stems target is not the controller")
     try require(statusQuit.action == NSSelectorFromString("quitApp"), "Quit Live Stems action is not quitApp")
+    try require(statusItems.contains { $0.title == "Follow What's Playing" && $0.action == NSSelectorFromString("toggleFollow") },
+      "Status menu has no Follow What's Playing toggle")
     checks.append(["name": "status_menu_ends_with_quit", "items": statusItems.map(\.title)])
     return checks
   }

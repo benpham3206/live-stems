@@ -69,7 +69,7 @@ case-insensitive prefix, e.g. com.google.Chrome.helper), and for Safari the
 shared com.apple.WebKit.GPU process. Spotify alone adds transport notices,
 Apple Events reads, and the self-pause; other apps work from audio alone.
 
-Follow What's Playing (on by default) polls once a second for regular apps with
+Follow What's Playing (on by default; in the right-click and Dock menus) polls once a second for regular apps with
 an audio process that runs output (kAudioProcessPropertyIsRunningOutput). The
 newest app that has played for 2 s becomes the source. A manual pick stands until
 an app starts after it. Activating Live Stems from a playing app is such a pick
