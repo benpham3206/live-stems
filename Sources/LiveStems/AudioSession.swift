@@ -33,6 +33,7 @@ final class AudioSession {
   private var tapID: AudioObjectID = 0, aggregate: AudioObjectID = 0, ioProc: AudioDeviceIOProcID?
   private let description = CATapDescription(), engine = AVAudioEngine()
   private var node: AVAudioSourceNode?, converter: AVAudioConverter?
+  private var pitch: PitchShift?
   private var inputFormat: AVAudioFormat!,
     modelFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
   private var started = false
@@ -92,7 +93,7 @@ final class AudioSession {
         return noErr
       }
       engine.attach(node!)
-      engine.connect(node!, to: engine.mainMixerNode, format: modelFormat)
+      pitch = PitchShift(engine: engine, source: node!, format: modelFormat)
       setSmallOutputBuffer()
       engine.prepare()
     } catch {
@@ -180,6 +181,17 @@ final class AudioSession {
     engine.stop()
     engine.reset()
     setSmallOutputBuffer()
+    try engine.start()
+    latency = nil
+  }
+  func setTranspose(_ semitones: Int) {
+    pitch?.set(semitones)
+  }
+  /// A seek must discard audio retained inside the pitch unit as well as the core queue.
+  func resetPitch() throws {
+    guard let pitch, !pitch.isBypassed else { return }
+    engine.pause()
+    pitch.reset()
     try engine.start()
     latency = nil
   }

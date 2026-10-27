@@ -37,14 +37,14 @@ struct AudioSource: Equatable {
   /// The chosen source, kept across launches.
   static var saved: AudioSource {
     get {
-      let defaults = UserDefaults.standard
+      let defaults = LocalSettings.defaults
       guard let id = defaults.string(forKey: "sourceBundleID"), let name = defaults.string(forKey: "sourceName")
       else { return .spotify }
       return AudioSource(bundleID: id, name: name)
     }
     set {
-      UserDefaults.standard.set(newValue.bundleID, forKey: "sourceBundleID")
-      UserDefaults.standard.set(newValue.name, forKey: "sourceName")
+      LocalSettings.defaults.set(newValue.bundleID, forKey: "sourceBundleID")
+      LocalSettings.defaults.set(newValue.name, forKey: "sourceName")
     }
   }
 }
@@ -66,8 +66,8 @@ enum StemModel: String, CaseIterable {
     }
   }
   static var saved: StemModel {
-    get { StemModel(rawValue: UserDefaults.standard.string(forKey: "model") ?? "") ?? .automatic }
-    set { UserDefaults.standard.set(newValue.rawValue, forKey: "model") }
+    get { StemModel(rawValue: LocalSettings.defaults.string(forKey: "model") ?? "") ?? .automatic }
+    set { LocalSettings.defaults.set(newValue.rawValue, forKey: "model") }
   }
 }
 struct StemControls {
@@ -83,27 +83,43 @@ struct StemControls {
   }
 }
 enum LocalSettings {
+  static let testDefaultsDomain = "com.benpham.livestems.e2e." + UUID().uuidString
+  static let defaults: UserDefaults = CommandLine.arguments.contains("--e2e")
+    ? UserDefaults(suiteName: testDefaultsDomain)! : .standard
+  private static let values: [String: String] = {
+    guard let path = Bundle.main.url(forResource: "local", withExtension: "json"),
+      let data = try? Data(contentsOf: path),
+      let values = try? JSONSerialization.jsonObject(with: data) as? [String: String]
+    else { return [:] }
+    return values
+  }()
   static let root: URL = {
-    if let p = Bundle.main.url(forResource: "local", withExtension: "json"),
-      let data = try? Data(contentsOf: p),
-      let values = try? JSONSerialization.jsonObject(with: data) as? [String: String],
-      let path = values["root"]
-    {
+    if let path = values["root"] {
       return URL(fileURLWithPath: path)
     }
     var p = URL(fileURLWithPath: #filePath)
     for _ in 0..<5 { p.deleteLastPathComponent() }
     return p
   }()
-  static var source: URL { root.appendingPathComponent("outputs/live-stems-source") }
+  static var source: URL {
+    values["source"].map { URL(fileURLWithPath: $0) } ?? root.appendingPathComponent("outputs/live-stems-source")
+  }
   static var python: URL { root.appendingPathComponent("work/stems-venv/bin/python") }
   static var cache: URL { root.appendingPathComponent("work/model-cache") }
-  static var runtime: URL {
+  static var instanceDirectory: URL {
     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Live Stems")
   }
+  static var runtime: URL {
+    Bundle.main.bundleIdentifier == "com.benpham.livestems.test"
+      ? instanceDirectory.deletingLastPathComponent().appendingPathComponent("Live Stems Test") : instanceDirectory
+  }
   static var evidence: URL {
-    Bundle.main.bundleURL.pathExtension == "app"
+    let args = CommandLine.arguments
+    if args.contains("--e2e"), let index = args.firstIndex(of: "--output"), index + 1 < args.count {
+      return URL(fileURLWithPath: args[index + 1]).appendingPathComponent("session")
+    }
+    return Bundle.main.bundleURL.pathExtension == "app"
       ? runtime : root.appendingPathComponent("outputs/live-stems-acceptance")
   }
 }

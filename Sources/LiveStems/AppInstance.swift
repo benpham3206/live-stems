@@ -9,7 +9,7 @@ enum AppInstance {
   }
   // An OS lock releases on process exit. A stale PID file cannot grant a
   // second instance permission to capture or to overwrite the same trace.
-  static func acquire(in directory: URL = LocalSettings.runtime) throws -> Int32? {
+  static func acquire(in directory: URL = LocalSettings.instanceDirectory) throws -> Int32? {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let descriptor = open(directory.appendingPathComponent("app.lock").path, O_CREAT | O_RDWR, 0o600)
     guard descriptor >= 0 else { throw StemError("Cannot open app instance lock") }

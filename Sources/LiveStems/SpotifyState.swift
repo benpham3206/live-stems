@@ -1,10 +1,23 @@
 import Foundation
 
-/// Publishes Spotify notices promptly while keeping the blocking state reader off
-/// the event queue. All lifecycle and snapshot mutation stays on stateQueue.
+/// Publishes Spotify notices promptly unless a seek is pending, keeping the
+/// blocking reader off the event queue. Lifecycle and snapshots use stateQueue.
 final class SpotifyState {
   typealias SnapshotHandler = (PlaybackSnapshot, Double) -> Void
   typealias UnavailableHandler = (String) -> Void
+
+  enum SeekError: LocalizedError {
+    case unsupportedOffset, invalidSnapshot, cancelled, readbackMismatch
+
+    var errorDescription: String? {
+      switch self {
+      case .unsupportedOffset: return "Spotify seek supports only ±5, 10, 15, or 30 seconds"
+      case .invalidSnapshot: return "Spotify seek requires a track with a valid duration and position"
+      case .cancelled: return "Spotify seek cancelled"
+      case .readbackMismatch: return "Spotify seek readback did not confirm the requested position and playback state"
+      }
+    }
+  }
 
   private struct Notice {
     let trackID: String
@@ -17,6 +30,9 @@ final class SpotifyState {
   private let readerQueue = DispatchQueue(label: "livestems.spotify-reader", qos: .utility)
   private let queueKey = DispatchSpecificKey<UInt8>()
   private let reader: () throws -> PlaybackSnapshot
+  private let positionWriter: (Double, String) throws -> Void
+  private var seekGeneration: UInt64 = 0
+  private var pendingSeeks = 0
   private var timer: DispatchSourceTimer?
   private var observer: NSObjectProtocol?
   private var running = false
@@ -29,8 +45,10 @@ final class SpotifyState {
   private var onSnapshot: SnapshotHandler?
   private var onUnavailable: UnavailableHandler?
 
-  init(reader: (() throws -> PlaybackSnapshot)? = nil) {
+  init(reader: (() throws -> PlaybackSnapshot)? = nil,
+       positionWriter: ((Double, String) throws -> Void)? = nil) {
     self.reader = reader ?? Self.readSnapshot
+    self.positionWriter = positionWriter ?? Self.writePosition
     stateQueue.setSpecific(key: queueKey, value: 1)
   }
 
@@ -63,6 +81,66 @@ final class SpotifyState {
 
   func stop() { syncState { stopLocked() } }
 
+  /// Invalidates queued seeks, including a seek waiting for its fresh read.
+  /// An external write already in progress cannot be retracted.
+  func cancelSeeks() { syncState { seekGeneration &+= 1 } }
+
+  /// Completion runs exactly once on stateQueue, including failures/cancellation.
+  /// Works before start(): direct Spotify transport does not need capture.
+  func seek(by offset: Int, completion: @escaping (Result<PlaybackSnapshot, Error>) -> Void) {
+    syncState {
+      let generation = seekGeneration
+      pendingSeeks += 1
+      // A poll begun before this request must not publish an old position later.
+      activeReadID = nil
+      readerQueue.async {
+        let result = Result { () throws -> PlaybackSnapshot in
+          try self.checkSeek(generation)
+          guard [-30, -15, -10, -5, 5, 10, 15, 30].contains(offset) else {
+            throw SeekError.unsupportedOffset
+          }
+          let before = try self.reader()
+          try Self.validateSeekSnapshot(before)
+          let target = min(before.duration, max(0, before.position + Double(offset)))
+          try self.checkSeek(generation)
+          try self.positionWriter(target, before.trackID)
+          let after = try self.reader()
+          try Self.validateSeekSnapshot(after)
+          guard after.trackID == before.trackID, after.isPlaying == before.isPlaying,
+            abs(after.duration - before.duration) <= 1, abs(after.position - target) <= 1
+          else { throw SeekError.readbackMismatch }
+          return after
+        }
+        self.stateQueue.async {
+          self.pendingSeeks -= 1
+          guard self.seekGeneration == generation else {
+            completion(.failure(SeekError.cancelled))
+            return
+          }
+          if case .success(let snapshot) = result {
+            self.noticeVersion &+= 1
+            self.latestSnapshot = snapshot
+            self.lastUnavailable = ""
+          }
+          // The caller handles the confirmed seek explicitly; no passive callback.
+          completion(result)
+        }
+      }
+    }
+  }
+
+  private func checkSeek(_ generation: UInt64) throws {
+    var cancelled = false
+    syncState { cancelled = seekGeneration != generation }
+    if cancelled { throw SeekError.cancelled }
+  }
+
+  private static func validateSeekSnapshot(_ snapshot: PlaybackSnapshot) throws {
+    guard !snapshot.trackID.isEmpty, snapshot.duration.isFinite, snapshot.duration > 0,
+      snapshot.position.isFinite, snapshot.position >= 0, snapshot.position <= snapshot.duration
+    else { throw SeekError.invalidSnapshot }
+  }
+
   // The observer and E2E both use this boundary. Parsing happens before the
   // state queue hop, so a slow reader cannot delay notice publication.
   func handleNotification(_ notification: Notification) {
@@ -73,6 +151,7 @@ final class SpotifyState {
   private func stopLocked() {
     dispatchPrecondition(condition: .onQueue(stateQueue))
     lifecycle &+= 1
+    seekGeneration &+= 1
     running = false
     activeReadID = nil
     timer?.setEventHandler {}
@@ -98,7 +177,7 @@ final class SpotifyState {
 
   private func pollIfNeeded() {
     dispatchPrecondition(condition: .onQueue(stateQueue))
-    guard running, activeReadID == nil else { return }
+    guard running, pendingSeeks == 0, activeReadID == nil else { return }
     readSequence &+= 1
     let readID = readSequence
     activeReadID = readID
@@ -145,7 +224,7 @@ final class SpotifyState {
 
   private func publish(_ notice: Notice) {
     dispatchPrecondition(condition: .onQueue(stateQueue))
-    guard running else { return }
+    guard running, pendingSeeks == 0 else { return }
     let old = latestSnapshot
     let sameTrack = old?.trackID == notice.trackID
     let snapshot = PlaybackSnapshot(
@@ -194,6 +273,33 @@ final class SpotifyState {
     readerQueue.async {
       var error: NSDictionary?
       NSAppleScript(source: "tell application \"Spotify\" to \(verb)")?.executeAndReturnError(&error)
+    }
+  }
+
+  private static func writePosition(_ target: Double, expectedTrackID: String) throws {
+    // POSIX formatting keeps the decimal point independent of the user's locale.
+    // Only validated numeric data crosses into AppleScript.
+    guard target.isFinite, target >= 0 else { throw SeekError.invalidSnapshot }
+    let number = String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), target)
+    let track = expectedTrackID.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+      .replacingOccurrences(of: "\r", with: "\\r").replacingOccurrences(of: "\n", with: "\\n")
+    let source = """
+      with timeout of 2 seconds
+        if application "Spotify" is not running then error number -1708
+        tell application "Spotify"
+          if id of current track is not "\(track)" then error "Track changed; try seeking again"
+          set player position to \(number)
+        end tell
+      end timeout
+      """
+    guard let script = NSAppleScript(source: source) else {
+      throw StemError("Cannot create Spotify seek script")
+    }
+    var error: NSDictionary?
+    script.executeAndReturnError(&error)
+    if let error {
+      throw StemError("Spotify seek failed · \(error[NSAppleScript.errorMessage] as? String ?? error.description)")
     }
   }
   private static let stateSource = """

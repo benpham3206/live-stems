@@ -13,5 +13,5 @@
 <key>LSUIElement</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSAudioCaptureUsageDescription</key><string>Capture the chosen app's audio locally to separate vocals, drums, bass, and other instruments.</string>
-<key>NSAppleEventsUsageDescription</key><string>Read Spotify playback state locally to align cached audio with the current track.</string>
+<key>NSAppleEventsUsageDescription</key><string>Read Spotify playback state and seek within the current track for listening practice.</string>
 </dict></plist>

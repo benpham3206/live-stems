@@ -4,7 +4,7 @@ import Foundation
 /// bring the panel back.
 enum Visibility {
   private static let dockKey = "showInDock", menuBarKey = "showInMenuBar", hideKey = "hideWhenInactive"
-  private static let defaults = UserDefaults.standard
+  private static let defaults = LocalSettings.defaults
   static var dock: Bool { defaults.object(forKey: dockKey) as? Bool ?? true }
   static var menuBar: Bool { defaults.object(forKey: menuBarKey) as? Bool ?? true }
   /// The panel hides when another app comes forward (Cmd+Tab, a click elsewhere).

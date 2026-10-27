@@ -21,6 +21,37 @@ Live Stems sits in your menu bar. Its panel has:
 - **Reset**, which puts every control back to normal.
 - a **spectrum** button (next to Reset), which opens the Spectrum Analyzer.
 
+## Test pitch and seek controls
+
+This branch adds a **Key** menu from −12 to +12 semitones. It changes the pitch of
+the final mix and keeps playback speed unchanged. **Zero** resets pitch alone.
+**Reset** clears pitch and the stem controls. Pitch works with Original and stem mixes.
+
+For Spotify, choose **5, 10, 15, or 30 seconds**, then click the backward or forward
+button. Seeking preserves paused playback and clamps to the current track's bounds.
+The position label reports the confirmed result or an error. Other sources can use
+pitch; their seek controls are disabled. The controls are local to this panel.
+
+Build a separate copy with `bash script/build_test.sh` from this checkout. It uses
+the existing Python environment, models, and signing identity in the workspace.
+The default output is `../../outputs/live-stems-pitch-seek-test`. To retain another
+test build, pass a new output-folder path. Existing output folders are never overwritten.
+
+1. Pause your source player. Open **Launch Test.command** in the output folder.
+   It asks the installed app to quit and opens **Live Stems Test**. It never forces a process to stop.
+2. Allow audio capture and Spotify control if macOS asks. The test copy has its own app identity.
+3. Select Spotify. Start a track and try **+2 semitones**, then **Zero**.
+   Try a muted-vocal mix as well as Original. The song's speed should stay the same.
+4. For each seek interval, try backward and forward. Try near the start/end, while
+   paused, and two seeks in succession. Check that old audio does not return after a seek.
+5. Open **Return to Installed.command** to quit the test copy and reopen the installed app.
+   Pause the source first if the app is waiting to quit.
+
+The test copy uses separate preferences and runtime logs. It shares the instance lock
+with the installed app so they cannot both capture. The installed app is not replaced.
+Automated tests render synthetic audio and use injected Spotify transport. Live music
+quality, permissions, device changes, and actual Spotify transport still need manual checks.
+
 ## How it works
 
 ```
