@@ -25,7 +25,7 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     self.settingsMenu = settingsMenu
     super.init()
     window.title = "Spectrum Analyzer"
-    if let saved = UserDefaults.standard.object(forKey: Self.glowKey) as? Int, Tuning.glowLooks.indices.contains(saved) {
+    if let saved = LocalSettings.defaults.object(forKey: Self.glowKey) as? Int, Tuning.glowLooks.indices.contains(saved) {
       view.glowLook = saved
     }
     // A native unified toolbar over the glass: the title at the leading edge, the view switch in the
@@ -185,7 +185,7 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
   }
   @objc func pickGlow(_ item: NSMenuItem) {
     view.glowLook = item.tag
-    UserDefaults.standard.set(item.tag, forKey: Self.glowKey)
+    LocalSettings.defaults.set(item.tag, forKey: Self.glowKey)
   }
   private static let glowKey = "SpectrumGlowLook"
 }

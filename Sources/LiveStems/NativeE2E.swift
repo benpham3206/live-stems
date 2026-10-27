@@ -101,6 +101,7 @@ enum NativeE2E {
   }
 
   static func run() throws {
+    defer { LocalSettings.defaults.removePersistentDomain(forName: LocalSettings.testDefaultsDomain) }
     let args = CommandLine.arguments
     guard let stageIndex = args.firstIndex(of: "--e2e"), stageIndex + 1 < args.count,
       let outputIndex = args.firstIndex(of: "--output"), outputIndex + 1 < args.count
@@ -128,6 +129,10 @@ enum NativeE2E {
       try SkipE2E.run(out)
     case "skip-state":
       try SpotifyStateE2E.run(out)
+    case "seek":
+      try SeekE2E.run(out)
+    case "pitch":
+      try PitchE2E.run(out)
     case "return":
       try ReturnE2E.run(out)
     case "capture-cut":

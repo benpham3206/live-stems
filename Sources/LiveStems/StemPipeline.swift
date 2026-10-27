@@ -129,16 +129,16 @@ final class StemPipeline {
       sourceFrame: cutEnd, sourceEnd: cutEnd))
   }
   @discardableResult
-  func observe(_ value: PlaybackSnapshot, hostTime: Double = stemClock()) -> Bool {
+  func observe(_ value: PlaybackSnapshot, hostTime: Double = stemClock(), forceSeek: Bool = false) -> Bool {
     guard value.position.isFinite, value.duration.isFinite,
       value.position >= 0, value.position <= 86400, value.duration >= 0 else { lost(); return false }
-    var cut = false, natural = false, fromTrack = ""
+    var cut = forceSeek, natural = false, fromTrack = ""
     if let old = snapshot {
       fromTrack = old.trackID
       let expected = old.position + (old.isPlaying ? max(0, hostTime - snapshotHost) : 0)
       if value.trackID != old.trackID {
         cut = true
-        natural = old.isPlaying && value.isPlaying && old.duration > 0
+        natural = !forceSeek && old.isPlaying && value.isPlaying && old.duration > 0
           && abs(expected - old.duration) < 1.2 && value.position < 1.5
       } else if abs(value.position - expected) > 1.0 {
         // An AppleScript read samples the position at an unknown point inside a
@@ -154,7 +154,7 @@ final class StemPipeline {
       // The notice and the poll can disagree for ~1 s around one transition
       // (duplicate notice, stale old-track read). A second cut naming either
       // side of the last cut is that same transition, not a new skip.
-      if hostTime - lastCutHost < 1.0
+      if !forceSeek && hostTime - lastCutHost < 1.0
         && (value.trackID == cutToTrack || value.trackID == cutFromTrack)
       {
         snapshot = value; snapshotHost = hostTime
@@ -166,6 +166,7 @@ final class StemPipeline {
       let position = max(0, value.position + (value.isPlaying && captureHost > 0 ? captureHost - hostTime : 0))
       let boundary = natural ? max(contextStart, end - Int(position * 44100)) : end
       resetContext(at: boundary, flush: !natural, host: hostTime, scan: !natural)
+      if forceSeek { ls_flush_output(core) }
     } else if changedPause {
       // Pause fades out at the notice instead of playing out the delay. A
       // resume begins new model context; Spotify's own fade-in is captured.

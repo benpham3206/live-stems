@@ -30,7 +30,7 @@ final class PanelWindow: NSWindow {
 
 final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuItemValidation {
   private var item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-  private let session = SessionController()
+  private let session: SessionController
   private var relaying = false
   /// True once the quit relay has finished; only then may the app really terminate.
   private(set) var canTerminate = false
@@ -62,6 +62,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private var lastOtherApp: String?
   /// What the worker loaded last; Automatic's pick shows next to it in the Model menu.
   private var runningModel: StemModel?
+  private var seeking = false, seekSource: AudioSource = .spotify
   override convenience init() {
     self.init(activateOnStatusClick: true)
   }
@@ -69,7 +70,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   /// `start` replaces the session start; the menu E2E counts starts without capturing audio.
   init(activateOnStatusClick: Bool, terminate: @escaping () -> Void = { NSApp.terminate(nil) },
     start: (() -> Void)? = nil,
-    setPolicy: @escaping (NSApplication.ActivationPolicy) -> Void = { NSApp.setActivationPolicy($0) }) {
+    setPolicy: @escaping (NSApplication.ActivationPolicy) -> Void = { NSApp.setActivationPolicy($0) },
+    session: SessionController = SessionController()) {
+    self.session = session
     self.setPolicy = setPolicy
     self.activatesOnStatusClick = activateOnStatusClick
     self.terminate = terminate
@@ -116,7 +119,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     fillSources()
     let actions: [(NSControl, Selector)] = [(panel.resetButton, #selector(resetButton)), (panel.spectrumButton, #selector(showSpectrum)),
       (panel.quitButton, #selector(quitApp)), (panel.muteAllButton, #selector(muteAll(_:))),
-      (panel.clearSoloButton, #selector(clearSolos))]
+      (panel.clearSoloButton, #selector(clearSolos)), (panel.pitchPicker, #selector(transpose)),
+      (panel.pitchReset, #selector(resetPitch)), (panel.seekStep, #selector(changeSeekStep)),
+      (panel.rewind, #selector(seek(_:))), (panel.forward, #selector(seek(_:)))]
     for (control, action) in actions {
       control.target = self
       control.action = action
@@ -235,11 +240,13 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       item.state = index > 0 && source == current ? .on : .off
     }
     sourcePicker.selectItem(at: 0)
+    seekSource = current
+    updateSeekControls()
   }
   /// On by default; kept across launches.
   private static var followsPlaying: Bool {
-    get { UserDefaults.standard.object(forKey: "followPlaying") as? Bool ?? true }
-    set { UserDefaults.standard.set(newValue, forKey: "followPlaying") }
+    get { LocalSettings.defaults.object(forKey: "followPlaying") as? Bool ?? true }
+    set { LocalSettings.defaults.set(newValue, forKey: "followPlaying") }
   }
   @objc private func toggleFollow() { Self.followsPlaying.toggle() }
   private func follow() {
@@ -280,6 +287,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   }
   /// Full volume, no mute or solo: Original, so the model sleeps.
   private func resetControls() {
+    panel.pitchPicker.selectItem(withTag: 0)
+    session.setTranspose(0)
     controls = StemControls()
     for strip in panel.strips {
       strip.fader.floatValue = 1
@@ -287,6 +296,48 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       strip.solo.state = .off
     }
     applyControls()
+  }
+  @objc private func transpose() {
+    let value = panel.pitchPicker.selectedItem?.tag ?? 0
+    session.setTranspose(value)
+    if !active && value != 0 { (startOverride ?? session.start)() }
+  }
+  @objc private func resetPitch() {
+    panel.pitchPicker.selectItem(withTag: 0)
+    session.setTranspose(0)
+  }
+  @objc private func changeSeekStep() { updateSeekControls() }
+  private func updateSeekControls() {
+    let seconds = panel.seekStep.selectedItem?.tag ?? 10
+    panel.rewind.title = "−\(seconds) s"
+    panel.forward.title = "+\(seconds) s"
+    panel.rewind.setAccessibilityLabel("Rewind \(seconds) seconds")
+    panel.forward.setAccessibilityLabel("Forward \(seconds) seconds")
+    for button in [panel.rewind, panel.forward] { button.isEnabled = seekSource.isSpotify && !seeking }
+    panel.seekStep.isEnabled = seekSource.isSpotify && !seeking
+    if !seeking {
+      panel.transportLabel.stringValue = seekSource.isSpotify ? "Spotify seeking" : "Seeking is available for Spotify only"
+      panel.transportLabel.toolTip = panel.transportLabel.stringValue
+    }
+  }
+  @objc private func seek(_ sender: NSButton) {
+    guard !seeking, seekSource.isSpotify else { return }
+    seeking = true
+    updateSeekControls()
+    panel.transportLabel.stringValue = "Seeking…"
+    let seconds = panel.seekStep.selectedItem?.tag ?? 10
+    session.seek(by: sender === panel.rewind ? -seconds : seconds) { [weak self] result in
+      guard let self else { return }
+      self.seeking = false
+      self.updateSeekControls()
+      switch result {
+      case .success(let value):
+        self.panel.transportLabel.stringValue = String(format: "Spotify · %d:%02d%@", Int(value.position) / 60,
+          Int(value.position) % 60, value.isPlaying ? "" : " · paused")
+      case .failure(let error): self.panel.transportLabel.stringValue = error.localizedDescription
+      }
+      self.panel.transportLabel.toolTip = self.panel.transportLabel.stringValue
+    }
   }
   @objc private func slide(_ sender: NSSlider) {
     controls.gains[sender.tag] = sender.floatValue

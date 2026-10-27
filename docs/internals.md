@@ -5,6 +5,18 @@ Engineering notes for the playback pipeline and its checks. The user guide is
 
 ## Playback
 
+`AudioSession` routes the final Original/stem mix through `PitchShift`. The native
+pitch unit keeps rate at 1 and bypasses at zero semitones. Nonzero pitch requests
+processed output even with neutral stem gains; separator sleep is still based on
+the stem mix. Added live effect latency has not been measured.
+
+The panel's Spotify seeks use a serialized fresh read, a bounded relative position
+write with an expected-track check, and a readback. Source switches and Quit invalidate
+queued requests. An external write already underway cannot be retracted. Confirmed
+seeks force distinct pipeline cuts, flush queued audio, and reset pitch history.
+The `pitch` stage checks the production effect graph, controls, repeated cuts, and
+source-switch cancellation; `seek` checks the injected player boundary and its failures.
+
 The processor uses one-second input windows. It requests a new result every
 at least 100 ms after the previous request. Each result supplies the new source
 frames since that request. The usable output ends 50 ms before the input ends.

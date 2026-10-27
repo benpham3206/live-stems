@@ -4,7 +4,7 @@ import Foundation
 // The session queue owns every pipeline mutation. Audio and state readers
 // publish events here; their callbacks never mutate caches on another queue.
 final class SessionController {
-  private let queue = DispatchQueue(label: "stems.session", qos: .userInitiated)
+  private let queue: DispatchQueue
   private var worker: WorkerClient?, audio: AudioSession?, pipeline: StemPipeline?,
     timer: DispatchSourceTimer?
   private var spotify: SpotifyState?
@@ -18,6 +18,7 @@ final class SessionController {
   private var loadedWorker: WorkerClient?  // the worker that finished loading; kept across a source switch
   private var controls = StemControls(), began = 0.0, capturePeak: Float = 0,
     lastCaptureEndHost = 0.0
+  private var transpose = 0
   private var lastDeviceCheck = 0.0, lastDiagnostics = 0.0, lastStatus = ""
   private let trace: LiveTrace
   private var lastTrace = 0.0
@@ -31,15 +32,19 @@ final class SessionController {
   var onModel: ((StemModel) -> Void)?
   var onStatus: ((String, String, Bool, Bool) -> Void)?
   init(traceDirectory: URL = LocalSettings.evidence, spotifyState: SpotifyState = SpotifyState(),
-    source: AudioSource = .saved) {
+    source: AudioSource = .saved,
+    queue: DispatchQueue = DispatchQueue(label: "stems.session", qos: .userInitiated)) {
+    self.queue = queue
     trace = LiveTrace(directory: traceDirectory)
     stateSource = spotifyState
     self.source = source
   }
   /// Switch the app being separated; a running session restarts on the new app.
   func setSource(_ value: AudioSource) {
+    stateSource.cancelSeeks()
     queue.async {
       guard value != self.source else { return }
+      self.stateSource.cancelSeeks()
       self.source = value
       guard self.enabled else { return }
       self.end("\(value.name) selected", keepWorker: true)
@@ -125,6 +130,7 @@ final class SessionController {
           self.queue.async {
             guard self.enabled, self.token == token else { return }
             if self.pipeline?.observe(value, hostTime: host) == true {
+              do { try self.audio?.resetPitch() } catch { self.end(error.localizedDescription); return }
               self.audio?.discardCapturedAudio(at: host)
               self.warmupsLeft = 3
               self.cutHost = host
@@ -234,7 +240,7 @@ final class SessionController {
     return spotify == nil && (pipeline.quietFrames >= 11025 || stemClock() - quitStarted > 3)
   }
   /// The mix is not Original at full volume: Live Stems must play the source.
-  private var mixChangesSource: Bool { stemsSelected && controls.effectiveGains.contains { $0 != 1 } }
+  private var mixChangesSource: Bool { transpose != 0 || (stemsSelected && controls.effectiveGains.contains { $0 != 1 }) }
   /// A session takes over from the source app once the mix differs from
   /// Original; until then the source plays direct. It uses a
   /// break where the 0.3 s shift is silent: a pause, a skip or seek (Spotify
@@ -318,6 +324,7 @@ final class SessionController {
     }
   }
   private func applyControls() {
+    audio?.setTranspose(transpose)
     if let core = audio?.core {
       controls.gains.withUnsafeBufferPointer {
         ls_controls(core, $0.baseAddress, controls.mute, controls.solo)
@@ -332,6 +339,46 @@ final class SessionController {
       self.trace.record(TraceRecord(event: "controls", generation: self.pipeline?.generation ?? self.token,
         sourceFrame: self.pipeline?.outputPosition, muteMask: value.mute, soloMask: value.solo, gains: value.gains))
       self.applyControls()
+    }
+  }
+  func setTranspose(_ value: Int) {
+    guard (-12...12).contains(value) else { return }
+    queue.async {
+      self.transpose = value
+      self.audio?.setTranspose(value)
+    }
+  }
+  var e2eNeedsOutput: Bool { queue.sync { mixChangesSource } }
+  func seek(by offset: Int, completion: @escaping (Result<PlaybackSnapshot, Error>) -> Void) {
+    queue.async {
+      guard self.source.isSpotify, self.quitCompletion == nil else {
+        DispatchQueue.main.async { completion(.failure(StemError("Seeking is available for Spotify only"))) }
+        return
+      }
+      let token = self.token
+      self.stateSource.seek(by: offset) { result in
+        self.queue.async {
+          guard self.source.isSpotify, self.token == token, self.quitCompletion == nil else {
+            DispatchQueue.main.async { completion(.failure(StemError("Seek cancelled because the session changed"))) }
+            return
+          }
+          do {
+            let value = try result.get()
+            let host = stemClock()
+            if self.pipeline?.observe(value, hostTime: host, forceSeek: true) == true {
+              self.audio?.discardCapturedAudio(at: host)
+              do { try self.audio?.resetPitch() } catch { self.end(error.localizedDescription); throw error }
+              self.warmupsLeft = 3
+              self.cutHost = host
+              self.awaitingFirstAudio = true
+              self.capturePeak = 0
+            }
+            DispatchQueue.main.async { completion(.success(value)) }
+          } catch {
+            DispatchQueue.main.async { completion(.failure(error)) }
+          }
+        }
+      }
     }
   }
   /// Pre-fader stem peaks since the last call; zeros when no session runs.
@@ -437,6 +484,7 @@ final class SessionController {
     ).save()
   }
   private func end(_ message: String, keepWorker: Bool = false) {
+    stateSource.cancelSeeks()
     let completion = quitCompletion
     quitCompletion = nil
     trace.record(TraceRecord(event: "stop", generation: token, sourceFrame: pipeline?.outputPosition, reason: message))
@@ -472,7 +520,9 @@ final class SessionController {
     }
   }
   func quit(completion: @escaping () -> Void) {
+    stateSource.cancelSeeks()
     queue.async {
+      self.stateSource.cancelSeeks()
       self.quitVersion &+= 1
       self.quitCompletion = completion
       self.quitStarted = stemClock()
