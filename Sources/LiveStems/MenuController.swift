@@ -178,6 +178,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   var e2eStatusButton: NSStatusBarButton? { item.button }
   var e2eWindow: NSWindow? { window }
   var e2eControls: StemControls { controls }
+  var e2eSeeking: Bool { seeking }
   func e2eApplyStatusForTest(enabled: Bool) {
     applyStatus(text: "E2E", output: "E2E", enabled: enabled, stems: true)
   }
@@ -306,8 +307,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     panel.forward.title = "+\(seconds) s"
     panel.rewind.setAccessibilityLabel("Rewind \(seconds) seconds")
     panel.forward.setAccessibilityLabel("Forward \(seconds) seconds")
-    for button in [panel.rewind, panel.forward] { button.isEnabled = seekSource.isSpotify && !seeking }
-    panel.seekStep.isEnabled = seekSource.isSpotify && !seeking
+    for button in [panel.rewind, panel.forward] { button.isEnabled = seekSource.isSpotify }
+    panel.seekStep.isEnabled = seekSource.isSpotify
     if !seeking {
       panel.transportLabel.stringValue = seekSource.isSpotify ? "Spotify seeking" : "Seeking is available for Spotify only"
       panel.transportLabel.toolTip = panel.transportLabel.stringValue
@@ -316,6 +317,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   @objc private func seek(_ sender: NSButton) {
     guard !seeking, seekSource.isSpotify else { return }
     seeking = true
+    sender.highlight(true)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { sender.highlight(false) }
     updateSeekControls()
     panel.transportLabel.stringValue = "Seeking…"
     let seconds = panel.seekStep.selectedItem?.tag ?? 10

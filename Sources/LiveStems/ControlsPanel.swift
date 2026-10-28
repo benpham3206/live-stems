@@ -17,6 +17,17 @@ class Backdrop: NSView {
   }
 }
 
+/// Darkens only the pressed seek button, including keyboard-triggered presses.
+final class SeekButton: NSButton {
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    if cell?.isHighlighted == true {
+      NSColor.black.withAlphaComponent(0.3).setFill()
+      NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6).fill()
+    }
+  }
+}
+
 /// One Logic-style channel strip: name plate, waveform, fader with dB scale,
 /// level meter, and M / S.
 final class ChannelStrip: Backdrop {
@@ -106,8 +117,8 @@ final class ControlsPanel: NSView {
   let clearSoloButton = LogicToggle(letter: "S", lit: soloColor)
   let quitButton = NSButton(title: "Quit Live Stems", target: nil, action: nil)
   let pitchPicker = NSPopUpButton(), pitchReset = NSButton(title: "Zero", target: nil, action: nil)
-  let seekStep = NSPopUpButton(), rewind = NSButton(title: "−10 s", target: nil, action: nil)
-  let forward = NSButton(title: "+10 s", target: nil, action: nil)
+  let seekStep = NSPopUpButton(), rewind = SeekButton(title: "−10 s", target: nil, action: nil)
+  let forward = SeekButton(title: "+10 s", target: nil, action: nil)
   let transportLabel = NSTextField(labelWithString: "Spotify seeking")
   let strips: [ChannelStrip]
   init() {
