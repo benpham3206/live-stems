@@ -29,7 +29,7 @@ the final mix and keeps playback speed unchanged. **Zero** resets pitch alone.
 
 For Spotify, choose **5, 10, 15, or 30 seconds**, then click the backward or forward
 button. Seeking preserves paused playback and clamps to the current track's bounds.
-The position label reports the confirmed result or an error. Other sources can use
+Seek status text is hidden in the panel. Other sources can use
 pitch; their seek controls are disabled. The controls are local to this panel.
 
 Build a separate copy with `bash script/build_test.sh` from this checkout. It uses

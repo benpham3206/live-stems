@@ -189,6 +189,7 @@ final class ControlsPanel: NSView {
     seekStep.setAccessibilityLabel("Seek interval")
     rewind.frame = NSRect(x: 14, y: 467, width: 104, height: 30)
     forward.frame = NSRect(x: 242, y: 467, width: 104, height: 30)
+    transportLabel.isHidden = true
     transportLabel.frame = NSRect(x: 16, y: 499, width: 328, height: 17)
     transportLabel.font = .systemFont(ofSize: 11)
     transportLabel.textColor = .secondaryLabelColor
