@@ -318,7 +318,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     guard !seeking, seekSource.isSpotify else { return }
     seeking = true
     sender.highlight(true)
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { sender.highlight(false) }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { sender.highlight(false) }
     updateSeekControls()
     panel.transportLabel.stringValue = "Seeking…"
     let seconds = panel.seekStep.selectedItem?.tag ?? 10

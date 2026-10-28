@@ -152,7 +152,9 @@ enum PitchE2E {
         charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!
       return window.performKeyEquivalent(with: event)
     }
+    let shortcutStart = stemClock()
     try require(shortcut(124), "Forward shortcut was not handled")
+    try require(stemClock() - shortcutStart < 0.25, "Shortcut blocked the UI waiting for Spotify")
     try require(forward.cell?.isHighlighted == true && back.cell?.isHighlighted == false,
       "Shortcut did not press only the forward button")
     if let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {

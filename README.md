@@ -30,7 +30,7 @@ the final mix and keeps playback speed unchanged. **Zero** resets pitch alone.
 For Spotify, choose **5, 10, 15, or 30 seconds**, then click the backward or forward
 button. Seeking preserves paused playback and clamps to the current track's bounds.
 With Live Stems focused, **Cmd+Shift+Left/Right** seeks backward/forward by the selected interval, including from the spectrum window.
-Only the pressed seek button darkens briefly; pending seeks ignore additional requests.
+Only the pressed seek button lights up briefly using the native button highlight; pending seeks ignore additional requests.
 Seek status text is hidden in the panel. Other sources can use
 pitch; their seek controls are disabled. The controls are local to this panel.
 

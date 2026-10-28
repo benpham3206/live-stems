@@ -17,20 +17,6 @@ class Backdrop: NSView {
   }
 }
 
-/// Darkens only the pressed seek button, including keyboard-triggered presses.
-final class SeekButton: NSButton {
-  override func draw(_ dirtyRect: NSRect) {
-    guard cell?.isHighlighted == true else { return super.draw(dirtyRect) }
-    NSColor(calibratedWhite: 0.12, alpha: 1).setFill()
-    NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
-    let text = NSAttributedString(string: title, attributes: [
-      .font: font ?? NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.white,
-    ])
-    let size = text.size()
-    text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
-  }
-}
-
 /// One Logic-style channel strip: name plate, waveform, fader with dB scale,
 /// level meter, and M / S.
 final class ChannelStrip: Backdrop {
@@ -120,8 +106,8 @@ final class ControlsPanel: NSView {
   let clearSoloButton = LogicToggle(letter: "S", lit: soloColor)
   let quitButton = NSButton(title: "Quit Live Stems", target: nil, action: nil)
   let pitchPicker = NSPopUpButton(), pitchReset = NSButton(title: "Zero", target: nil, action: nil)
-  let seekStep = NSPopUpButton(), rewind = SeekButton(title: "−10 s", target: nil, action: nil)
-  let forward = SeekButton(title: "+10 s", target: nil, action: nil)
+  let seekStep = NSPopUpButton(), rewind = NSButton(title: "−10 s", target: nil, action: nil)
+  let forward = NSButton(title: "+10 s", target: nil, action: nil)
   let transportLabel = NSTextField(labelWithString: "Spotify seeking")
   let strips: [ChannelStrip]
   init() {
