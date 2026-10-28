@@ -20,11 +20,14 @@ class Backdrop: NSView {
 /// Darkens only the pressed seek button, including keyboard-triggered presses.
 final class SeekButton: NSButton {
   override func draw(_ dirtyRect: NSRect) {
-    super.draw(dirtyRect)
-    if cell?.isHighlighted == true {
-      NSColor.black.withAlphaComponent(0.3).setFill()
-      NSBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6).fill()
-    }
+    guard cell?.isHighlighted == true else { return super.draw(dirtyRect) }
+    NSColor(calibratedWhite: 0.12, alpha: 1).setFill()
+    NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+    let text = NSAttributedString(string: title, attributes: [
+      .font: font ?? NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.white,
+    ])
+    let size = text.size()
+    text.draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2))
   }
 }
 
