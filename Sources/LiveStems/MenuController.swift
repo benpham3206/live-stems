@@ -7,8 +7,14 @@ final class PanelWindow: NSWindow {
   var quit: () -> Void = {}
   var cycleStem: (Int) -> Void = { _ in }
   var cycleSpectrum: () -> Void = {}
+  var seekRelative: (Bool) -> Void = { _ in }
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
-    guard event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {
+    let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+    if event.type == .keyDown, modifiers == [.command, .shift], [123, 124].contains(event.keyCode) {
+      seekRelative(event.keyCode == 124)
+      return true
+    }
+    guard event.type == .keyDown, modifiers == .command else {
       return super.performKeyEquivalent(with: event)
     }
     switch event.charactersIgnoringModifiers {
@@ -50,6 +56,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     spectrum.window.quit = window.quit
     spectrum.window.cycleStem = window.cycleStem
     spectrum.window.cycleSpectrum = window.cycleSpectrum
+    spectrum.window.seekRelative = window.seekRelative
     return spectrum
   }()
   private var sourcePicker: NSPopUpButton { panel.sourcePicker }
@@ -84,6 +91,10 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     window.quit = { [weak self] in self?.quitApp() }
     window.cycleStem = { [weak self] in self?.cycleStem($0) }
     window.cycleSpectrum = { [weak self] in self?.spectrum.cycle() }
+    window.seekRelative = { [weak self] forward in
+      guard let self else { return }
+      self.seek(forward ? self.panel.forward : self.panel.rewind)
+    }
     window.level = .floating
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
