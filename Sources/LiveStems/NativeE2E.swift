@@ -156,8 +156,10 @@ enum NativeE2E {
     case "spectrum":
       try SpectrumE2E.run(out)
     case "follow":
+      try AudioActivityProbe.check()
+      try SourceActivity.check()
       try SourceFollower.check()
-      print("PASS follow · newest player wins, blips and manual picks hold · playing now: \(SourceFollower.playingApps().values.sorted())")
+      print("PASS follow · newest player wins, blips and manual picks hold · candidate output streams: \(SourceFollower.playingApps().values.sorted())")
     case "fader-redraw":
       try FaderRedrawE2E.run()
     case "transitions":

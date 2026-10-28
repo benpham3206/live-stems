@@ -81,12 +81,15 @@ case-insensitive prefix, e.g. com.google.Chrome.helper), and for Safari the
 shared com.apple.WebKit.GPU process. Spotify alone adds transport notices,
 Apple Events reads, and the self-pause; other apps work from audio alone.
 
-Follow What's Playing (on by default; in the right-click and Dock menus) polls once a second for regular apps with
-an audio process that runs output (kAudioProcessPropertyIsRunningOutput). The
-newest app that has played for 2 s becomes the source. A manual pick stands until
-an app starts after it. Activating Live Stems from a playing app is such a pick
-(`SourceFollower.cameFrom`, fed by NSWorkspace activation notices): the app you
-came from becomes the source. The rule is in `SourceFollower.swift`; stage `follow` checks it.
+Follow What's Playing polls once a second for regular apps with open output streams.
+Capture-only, unmuted private taps check those candidates for finite audio peaks above
+0.0001 (-80 dBFS). Probe work runs off the UI thread. Samples are not saved.
+Activity bridges gaps shorter than 1.5 s; the newest active app must pass the existing
+2 s hold before selection. Silent streams and failed probes do not qualify.
+Changing app focus does not select a source. A manual pick stands until an app starts
+after it. Probes are released when their candidate disappears. The `follow` stage
+checks silent Chrome, real audio, invalid levels, timing, and manual selection.
+Actual tap permissions and live browser/Spotify behavior need live acceptance.
 A source switch restarts capture, the pipeline, and the takeover, but keeps the
 loaded worker, so the model does not reload. Results from a job sent before the
 switch are dropped. Stage `spam-live` requires the same worker PID after six switches.

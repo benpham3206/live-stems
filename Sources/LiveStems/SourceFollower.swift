@@ -26,16 +26,7 @@ struct SourceFollower {
     return id
   }
 
-  /// Switching to Live Stems from an app that is playing makes that app the source,
-  /// as a manual pick: with Chrome and Spotify both playing, the one you came from gets stems.
-  static func cameFrom(_ previous: String?, current: String, playing: Set<String>) -> String? {
-    guard let previous, previous != current, playing.contains(previous) else { return nil }
-    return previous
-  }
-
-  /// Open regular apps (not Live Stems) that have an audio process running output, by bundle ID.
-  // ponytail: "running output" is true for a paused app that holds its stream open
-  // (some browsers do for seconds after pause); read the tap's level if that bites.
+  /// Candidate apps with open output streams. This is not evidence of audible playback.
   static func playingApps() -> [String: String] {
     let running = AudioSession.audioProcesses().filter { isRunningOutput($0.0) }.map(\.1)
     var apps = [String: String]()
@@ -81,13 +72,6 @@ struct SourceFollower {
     try run([(0, ["spotify", "arc"], nil), (3, ["spotify", "arc"], nil)], from: "spotify")
     // Launch with a silent saved source: follow what plays.
     try run([(0, ["arc"], nil), (2, ["arc"], "arc")], from: "spotify")
-    // Coming to Live Stems from a playing app picks it; from a silent app or the source, nothing.
-    guard cameFrom("chrome", current: "spotify", playing: ["spotify", "chrome"]) == "chrome",
-      cameFrom("spotify", current: "chrome", playing: ["spotify", "chrome"]) == "spotify",
-      cameFrom("finder", current: "spotify", playing: ["spotify", "chrome"]) == nil,
-      cameFrom("spotify", current: "spotify", playing: ["spotify"]) == nil,
-      cameFrom(nil, current: "spotify", playing: ["chrome"]) == nil
-    else { throw StemError("Switching from a playing app did not pick it") }
     // A manual pick of a silent app stands until something starts after it.
     try run([(10, ["chrome"], nil), (30, ["chrome"], nil), (31, ["chrome", "arc"], nil), (33, ["chrome", "arc"], "arc")],
       from: "music", picked: 10)

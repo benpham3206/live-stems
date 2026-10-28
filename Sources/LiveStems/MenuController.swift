@@ -57,9 +57,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private var meterTimer: Timer?
   private var followTimer: Timer?
   private var follower = SourceFollower()
-  private var activationObserver: NSObjectProtocol?
-  /// The last app in front before Live Stems.
-  private var lastOtherApp: String?
+  private let sourceActivity = SourceActivity()
   /// What the worker loaded last; Automatic's pick shows next to it in the Model menu.
   private var runningModel: StemModel?
   private var seeking = false, seekSource: AudioSource = .spotify
@@ -162,12 +160,6 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     // E2E controllers (start override) never follow, so a test cannot change the saved source.
     if start == nil {
       followTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.follow() }
-      let center = NSWorkspace.shared.notificationCenter
-      activationObserver = center.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
-        object: nil, queue: .main) { [weak self] note in
-        let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-        self?.activated(app?.bundleIdentifier)
-      }
     }
     // The first launch shows the controls without making the app frontmost.
     presentWindow(reason: "launch", userInitiated: false)
@@ -248,26 +240,16 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     get { LocalSettings.defaults.object(forKey: "followPlaying") as? Bool ?? true }
     set { LocalSettings.defaults.set(newValue, forKey: "followPlaying") }
   }
-  @objc private func toggleFollow() { Self.followsPlaying.toggle() }
+  @objc private func toggleFollow() {
+    Self.followsPlaying.toggle()
+    if !Self.followsPlaying { sourceActivity.clear() }
+  }
   private func follow() {
     guard Self.followsPlaying else { return }
-    let playing = SourceFollower.playingApps()
+    let playing = sourceActivity.playing(candidates: SourceFollower.playingApps())
     guard let id = follower.next(current: session.source.bundleID, playing: Set(playing.keys), now: stemClock()),
       let name = playing[id] else { return }
     let source = AudioSource(bundleID: id, name: name)
-    AudioSource.saved = source
-    session.setSource(source)
-    fillSources(current: source)
-  }
-  /// Coming to Live Stems from a playing app makes that app the source (a manual pick).
-  private func activated(_ id: String?) {
-    guard id == Bundle.main.bundleIdentifier else { lastOtherApp = id; return }
-    guard Self.followsPlaying else { return }
-    let playing = SourceFollower.playingApps()
-    guard let pick = SourceFollower.cameFrom(lastOtherApp, current: session.source.bundleID,
-      playing: Set(playing.keys)), let name = playing[pick] else { return }
-    let source = AudioSource(bundleID: pick, name: name)
-    follower.picked(at: stemClock())
     AudioSource.saved = source
     session.setSource(source)
     fillSources(current: source)

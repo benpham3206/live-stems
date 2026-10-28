@@ -1,4 +1,5 @@
 #pragma once
+#include "ActivityProbe.h"
 #include <CoreAudio/CoreAudio.h>
 #include <stdint.h>
 typedef struct LSCore LSCore;
