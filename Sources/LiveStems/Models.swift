@@ -101,11 +101,19 @@ enum LocalSettings {
     for _ in 0..<5 { p.deleteLastPathComponent() }
     return p
   }()
-  static var source: URL {
-    values["source"].map { URL(fileURLWithPath: $0) } ?? root.appendingPathComponent("outputs/live-stems-source")
+  private static var bundledRuntime: URL? {
+    guard values["root"] == nil, Bundle.main.bundleURL.pathExtension == "app",
+      let resources = Bundle.main.resourceURL else { return nil }
+    return resources.appendingPathComponent("Runtime")
   }
-  static var python: URL { root.appendingPathComponent("work/stems-venv/bin/python") }
-  static var cache: URL { root.appendingPathComponent("work/model-cache") }
+  static var source: URL {
+    if bundledRuntime != nil { return Bundle.main.resourceURL! }
+    return values["source"].map { URL(fileURLWithPath: $0) } ?? root.appendingPathComponent("outputs/live-stems-source")
+  }
+  static var python: URL { bundledRuntime?.appendingPathComponent("bin/python3.12") ?? root.appendingPathComponent("work/stems-venv/bin/python") }
+  static var cache: URL {
+    bundledRuntime != nil ? Bundle.main.resourceURL!.appendingPathComponent("Models") : root.appendingPathComponent("work/model-cache")
+  }
   static var instanceDirectory: URL {
     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("Live Stems")

@@ -25,7 +25,8 @@ Live Stems sits in your menu bar. Its panel has:
 
 This branch adds a **Key** menu from −12 to +12 semitones. It changes the pitch of
 the final mix and keeps playback speed unchanged. **Zero** resets pitch alone.
-**Reset** clears pitch and the stem controls. Pitch works with Original and stem mixes.
+**Reset** clears pitch and the stem controls. Pitch works with Original and stem mixes. Transpose uses Rubber Band R3 for improved
+clarity. Nonzero pitch adds buffering; Zero bypasses it.
 
 For Spotify, choose **5, 10, 15, or 30 seconds**, then click the backward or forward
 button. Seeking preserves paused playback and clamps to the current track's bounds.
@@ -300,3 +301,11 @@ MLX port [demucs-mlx](https://github.com/ssmall256/demucs-mlx). The model weight
 their official source during install. They are not part of this repository.
 
 Live Stems relies on macOS audio taps; a macOS update could break it.
+
+## Drag-to-Applications packaging
+
+A self-contained disk-image build is available for development and release preparation. It bundles Python and the models and uses a native Finder install window. See [packaging and release checks](packaging/README.md). Public distribution still needs Developer ID signing and notarization.
+
+## Licence
+
+Live Stems is licensed under GPL-2.0-or-later. See [LICENSE](LICENSE). Rubber Band and the other bundled components retain their own notices; see [packaging licences](packaging/README.md#licence).

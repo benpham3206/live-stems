@@ -32,7 +32,7 @@ final class AudioSession {
   var name: String { outputName(outputID) }
   private var tapID: AudioObjectID = 0, aggregate: AudioObjectID = 0, ioProc: AudioDeviceIOProcID?
   private let description = CATapDescription(), engine = AVAudioEngine()
-  private var node: AVAudioSourceNode?, converter: AVAudioConverter?
+  private var converter: AVAudioConverter?
   private var pitch: PitchShift?
   private var inputFormat: AVAudioFormat!,
     modelFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
@@ -88,12 +88,10 @@ final class AudioSession {
         AudioDeviceCreateIOProcID(
           aggregate, ls_capture_callback, UnsafeMutableRawPointer(c), &ioProc),
         "Cannot prepare capture callback")
-      node = AVAudioSourceNode(format: modelFormat) { _, time, frames, list in
+      pitch = try PitchShift(engine: engine, format: modelFormat) { _, time, frames, list in
         ls_render_timed(c, frames, list, time)
         return noErr
       }
-      engine.attach(node!)
-      pitch = PitchShift(engine: engine, source: node!, format: modelFormat)
       setSmallOutputBuffer()
       engine.prepare()
     } catch {
@@ -115,14 +113,14 @@ final class AudioSession {
   /// Seconds from render to speaker (AirPods add ~0.2 s), so a display can wait for the sound.
   /// Read once per output: the query goes to the audio server and cost ~10% of a core at 30 reads a second.
   var outputLatency: Double {
-    if let latency { return latency }
+    if let latency { return latency + (pitch?.latency ?? 0) }
     let value = engine.outputNode.presentationLatency
     latency = value
-    return value
+    return value + (pitch?.latency ?? 0)
   }
   private var latency: Double?
   /// AVAudioEngine stops itself when the output device's format changes.
-  var outputStopped: Bool { !engine.isRunning }
+  var outputStopped: Bool { !engine.isRunning || (pitch?.failed ?? false) }
   /// Many apps play audio from helper processes: browsers (com.google.Chrome.helper,
   /// company.thebrowser.browser.helper) and Safari, whose audio comes from the
   /// shared WebKit GPU process. Tap the app, its helpers, and Safari's WebKit.
@@ -177,6 +175,7 @@ final class AudioSession {
   /// Move playback to the new default output (headphones, speakers). Capture,
   /// the queue, and the delay stay, so no new takeover is needed.
   func followOutput() throws {
+    guard !(pitch?.failed ?? false) else { throw StemError("Transpose buffer failed; source playback restored") }
     outputID = defaultOutput()
     engine.stop()
     engine.reset()

@@ -1,0 +1,34 @@
+[
+  {
+    "filename": "demucs_mlx-1.5.3-py3-none-any.whl",
+    "sha256": "7a0774eeef18fef39ef9a389a440cc19a9d90be0c5261f9869fc4df9763df130"
+  },
+  {
+    "filename": "mlx-0.32.3-cp312-cp312-macosx_14_0_arm64.whl",
+    "sha256": "7aecc3d4a904279492dae58e28378a3c4bec4533e7066e64ae5c78c7a5511f22"
+  },
+  {
+    "filename": "mlx_audio_io-1.3.24-cp312-cp312-macosx_14_0_arm64.whl",
+    "sha256": "8009f6d70b94edc9679017a182025897eeb70eb81dd8e46bb89826cd9eba94c1"
+  },
+  {
+    "filename": "mlx_metal-0.32.3-py3-none-macosx_14_0_arm64.whl",
+    "sha256": "fdba88ed9131448cf163be2c7ad6374746d8818205f28657aa91b6c69050f691"
+  },
+  {
+    "filename": "mlx_spectro-0.9.10-py3-none-any.whl",
+    "sha256": "4c15f0a652a6dbd8012c619245bcccd4995ecfca1e8f8fbcc2b03f2ba68f507c"
+  },
+  {
+    "filename": "numpy-2.5.4-cp312-cp312-macosx_14_0_arm64.whl",
+    "sha256": "9cb18a327b49c5c337f972b03682f6a49855525faaf3c0d3e9c96cd0fd8880a8"
+  },
+  {
+    "filename": "packaging-26.3-py3-none-any.whl",
+    "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c"
+  },
+  {
+    "filename": "tqdm-4.70.1-py3-none-any.whl",
+    "sha256": "c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73"
+  }
+]

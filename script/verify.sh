@@ -1,5 +1,5 @@
 #!/bin/bash
-# Checks the model file packing, builds the app and runs the stages that need no GPU, signing, audio permission or private audio.
+# Checks the model file packing, builds the app and runs offline/native checks without signing or private audio capture. AppKit checks show windows and spectrum checks can use Metal.
 # Exit 0 means the build and every stage passed. Live stages are in docs/internals.md.
 set -euo pipefail
 

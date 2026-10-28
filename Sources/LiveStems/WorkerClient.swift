@@ -31,6 +31,7 @@ final class WorkerClient {
         self.log = try FileHandle(forWritingTo: path)
         self.process.executableURL = LocalSettings.python
         self.process.arguments = [
+          "-I", "-B",
           LocalSettings.source.appendingPathComponent("worker/stem_worker.py").path, "--cache",
           LocalSettings.cache.path, "--trace-dir", LocalSettings.evidence.path, "--model", self.model.rawValue,
         ]
