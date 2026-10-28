@@ -81,10 +81,10 @@ case-insensitive prefix, e.g. com.google.Chrome.helper), and for Safari the
 shared com.apple.WebKit.GPU process. Spotify alone adds transport notices,
 Apple Events reads, and the self-pause; other apps work from audio alone.
 
-Follow What's Playing polls once a second for regular apps with open output streams.
+Follow What's Playing polls every quarter second for regular apps with open output streams.
 Capture-only, unmuted private taps check those candidates for finite audio peaks above
 0.0001 (-80 dBFS). Probe work runs off the UI thread. Samples are not saved.
-Activity bridges gaps shorter than 1.5 s; the newest active app must pass the existing
+Activity bridges gaps shorter than 0.5 s; cached measurements expire after 0.75 s; the newest active app must pass the existing
 2 s hold before selection. Silent streams and failed probes do not qualify.
 Changing app focus does not select a source. A manual pick stands until an app starts
 after it. Probes are released when their candidate disappears. The `follow` stage

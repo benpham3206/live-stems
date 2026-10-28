@@ -170,7 +170,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     RunLoop.main.add(meterTimer!, forMode: .common)
     // E2E controllers (start override) never follow, so a test cannot change the saved source.
     if start == nil {
-      followTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.follow() }
+      followTimer = Timer.scheduledTimer(withTimeInterval: SourceActivity.pollInterval, repeats: true) { [weak self] _ in self?.follow() }
     }
     // The first launch shows the controls without making the app frontmost.
     presentWindow(reason: "launch", userInitiated: false)

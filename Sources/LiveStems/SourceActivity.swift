@@ -2,6 +2,7 @@ import Foundation
 
 /// Polls capture-only probes off the UI thread. Raw samples are never retained.
 final class SourceActivity {
+  static let pollInterval = 0.25
   private let queue = DispatchQueue(label: "LiveStems.sourceActivity")
   private var probes: [String: AudioActivityProbe] = [:] // queue only
   private var processes: [String: [UInt32]] = [:] // queue only
@@ -34,8 +35,8 @@ final class SourceActivity {
           if probes[id] == nil { probes[id] = try? AudioActivityProbe(bundleID: id) }
           if Self.isAudible(probes[id]?.takePeak() ?? 0) { recent[id] = now }
         }
-        // Bridge short gaps between poll windows, but do not keep silent streams alive.
-        let audible = candidates.filter { now - (recent[$0.key] ?? -.infinity) < 1.5 }
+        // Bridge short gaps between quarter-second poll windows, but do not keep silent streams alive.
+        let audible = candidates.filter { now - (recent[$0.key] ?? -.infinity) < 0.5 }
         DispatchQueue.main.async { [self] in
           if generation == requestedGeneration { confirmed = audible; confirmedAt = now }
           pending = false
@@ -46,12 +47,12 @@ final class SourceActivity {
     return confirmed.filter { candidates[$0.key] != nil }
   }
 
-  static func isFresh(measured: Double, now: Double) -> Bool { now - measured < 1.5 }
+  static func isFresh(measured: Double, now: Double) -> Bool { now - measured < 0.75 }
 
   static func isAudible(_ peak: Float) -> Bool { peak.isFinite && peak > 0.0001 }
 
   static func check() throws {
-    guard isFresh(measured: 10, now: 11), !isFresh(measured: 10, now: 12) else {
+    guard isFresh(measured: 10, now: 10.5), !isFresh(measured: 10, now: 11) else {
       throw StemError("Stalled activity probes must not retain a playing app")
     }
     var follower = SourceFollower()
