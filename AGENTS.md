@@ -10,3 +10,5 @@ Native macOS live audio capture, stem separation, and practice controls.
 - Use `bash script/build_test.sh` for a separate signed test bundle. It never replaces or launches the installed app. See [README.md](README.md#test-pitch-and-seek-controls).
 - `AudioSession` owns capture/output; `PitchShift` owns transpose DSP; `StemPipeline` owns the frame timeline; `SessionController` orders session mutations; `SpotifyState` serializes source transport; `MenuController` wires `ControlsPanel`.
 - Test and installed apps use separate settings/runtime paths but one instance lock. Never run both capture paths at once.
+
+- Follow requires fresh finite audio activity above -80 dBFS and the selection hold. An open output stream or app focus alone never proves playback. Failed probes do not qualify; manual source selection remains available.
