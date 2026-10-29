@@ -36,7 +36,7 @@ The model cache must contain the existing `htdemucs` and `htdemucs_ft` safetenso
 
 The command builds, packages, signs nested code before the app, audits embedded Mach-O minimum versions and absolute dependencies, checks the app signature, imports bundled inference modules, creates and lays out a writable disk image, converts it to a compressed image, and verifies the image. Failed outputs are retained for diagnosis. Use a fresh output directory for another attempt. The command does not stop, install, or launch Live Stems. It briefly opens its mounted image in Finder to set the layout, then detaches that image in a finally block.
 
-`binary-audit.json` records the embedded native-code targets. The app and all embedded native libraries must target macOS 14.2 or earlier. This static check does not replace running the final app on macOS 14.2. Recheck MLX wheels when updating: a build on a newer Mac can otherwise select newer-platform wheels.
+`binary-audit.json` records the embedded native-code targets. The app and all embedded native libraries must target macOS 14.2 or earlier. This static check does not replace running the final app on macOS 14.2. Recheck MLX wheels when updating: a build on a newer Mac can otherwise select newer-platform wheels. The Opus 5.5 review also checked the bundled Metal library target (macOS 14.0), SDK availability of the process-tap APIs (14.2), and guards around macOS 26 APIs. No static compatibility blocker was found. This does not establish successful launch, permissions, capture, or inference on a real macOS 14.2 system.
 
 Check the real app after packaging or relocation:
 

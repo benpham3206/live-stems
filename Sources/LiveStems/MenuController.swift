@@ -278,15 +278,18 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     Self.followsPlaying.toggle()
     if !Self.followsPlaying { sourceActivity.clear() }
   }
+  /// Acts on each measurement as it arrives, stamped with its own time.
   private func follow() {
     guard Self.followsPlaying else { return }
-    let playing = sourceActivity.playing(candidates: SourceFollower.playingApps())
-    guard let id = follower.next(current: session.source.bundleID, playing: Set(playing.keys), now: stemClock()),
-      let name = playing[id] else { return }
-    let source = AudioSource(bundleID: id, name: name)
-    AudioSource.saved = source
-    session.setSource(source)
-    fillSources(current: source)
+    sourceActivity.poll(apps: SourceFollower.regularApps()) { [weak self] playing, measured in
+      guard let self, Self.followsPlaying,
+        let id = self.follower.next(current: self.session.source.bundleID, playing: Set(playing.keys), now: measured),
+        let name = playing[id] else { return }
+      let source = AudioSource(bundleID: id, name: name)
+      AudioSource.saved = source
+      self.session.setSource(source)
+      self.fillSources(current: source)
+    }
   }
   @objc private func pickSource() {
     guard let item = sourcePicker.selectedItem, let id = item.representedObject as? String else { return }

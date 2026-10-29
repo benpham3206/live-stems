@@ -83,17 +83,25 @@ shared com.apple.WebKit.GPU process. Spotify alone adds transport notices,
 Apple Events reads, and the self-pause; other apps work from audio alone.
 
 Follow What's Playing polls every quarter second for regular apps with open output streams.
-Capture-only, unmuted private taps check those candidates for finite audio peaks above
-0.0001 (-80 dBFS). Probe work runs off the UI thread. Samples are not saved.
-Activity bridges gaps shorter than 0.5 s; cached measurements expire after 0.75 s; the newest active app must pass the existing
-2 s hold before selection. Silent streams and failed probes do not qualify.
-Changing app focus does not select a source. A manual pick stands until an app starts
-after it. Probes are released when their candidate disappears. The `follow` stage
-checks silent Chrome, real audio, invalid levels, timing, and manual selection.
-Actual tap permissions and live browser/Spotify behavior need live acceptance.
+The CoreAudio process scan (about 10 ms, up to 90 ms measured on the development Mac) and all probe
+work run off the UI thread. Capture-only, unmuted private taps check those candidates for
+finite audio peaks above 0.0001 (-80 dBFS). Samples are not saved. Each poll's result is
+acted on when it arrives, stamped with its own measurement time; callbacks older than 0.75 s are discarded. A probe opened in a poll
+is read 50 ms later instead of one poll later. A probe that fails to open is retried after
+2 s, not on every poll. Activity bridges gaps shorter than 0.5 s. The newest active app must
+pass the 2 s hold before selection; the current source keeps its place through silences
+shorter than the hold, so a track gap with another app playing cannot flap the source.
+Silent streams, nonfinite levels, and failed probes do not qualify. Changing app focus does
+not select a source. A manual pick stands until an app starts after it. Probes are released
+when their candidate disappears. The `follow` stage runs poll timelines through the
+production rules: sustained playback after a pause selects in 2.05-2.25 s across poll
+phases (hold plus at most one poll); silent focused Chrome, invalid levels, 1.5 s blips,
+0.75 s alternation, a 1.5 s source gap, and manual picks do not switch. This is selection
+time, not acoustic handoff. Probe start-up and tap permissions, and live browser/Spotify
+behavior, need live acceptance.
 A source switch restarts capture, the pipeline, and the takeover, but keeps the
 loaded worker, so the model does not reload. Results from a job sent before the
-switch are dropped. Stage `spam-live` requires the same worker PID after six switches.
+switch are dropped (the `six-worker` stage checks this on the real six-source worker, with guitar/piano controls kept). Stage `spam-live` requires the same worker PID after six switches.
 
 The app arms at launch: capture and the worker start, the source stays direct, and
 the pipeline commits nothing (holdForBreak), so waiting cannot fill the queue.

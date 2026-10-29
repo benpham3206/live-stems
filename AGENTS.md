@@ -11,7 +11,7 @@ Native macOS live audio capture, stem separation, and practice controls.
 - `AudioSession` owns capture/output; `PitchShift` owns transpose DSP; `StemPipeline` owns the frame timeline; `SessionController` orders session mutations; `SpotifyState` serializes source transport; `MenuController` wires `ControlsPanel`.
 - Test and installed apps use separate settings/runtime paths but one instance lock. Never run both capture paths at once.
 
-- Follow requires fresh finite audio activity above -80 dBFS and the selection hold. An open output stream or app focus alone never proves playback. Failed probes do not qualify; manual source selection remains available.
+- Follow requires fresh finite audio activity above -80 dBFS and the selection hold. An open output stream or app focus alone never proves playback. Failed probes do not qualify; manual source selection remains available. The current source keeps its place through silences shorter than the hold. CoreAudio scans and probes stay off the main thread.
 
 - `script/package_release.py` builds a self-contained drag-install DMG without installing or launching the app. Runtime wheels are hash-pinned for macOS 14; audit every embedded Mach-O before claiming 14.2 support. See [packaging](packaging/README.md).
 - Packaged Python and models live in bundle Resources. Run the worker with `-I -B`; keep the model directory read-only to prevent digest stamps from changing the signed bundle.
