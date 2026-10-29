@@ -1,12 +1,14 @@
 import AVFoundation
 
-/// The output effect is shared by Original and the stem mix. Its graph can also
-/// render offline, so tests exercise the same effect as a captured source.
+/// Apple's native pitch effect, shared by Original and stem output.
 final class PitchShift {
   private let unit = AVAudioUnitTimePitch()
   var isBypassed: Bool { unit.auAudioUnit.shouldBypassEffect }
+  var latency: Double { isBypassed ? 0 : unit.auAudioUnit.latency }
 
-  init(engine: AVAudioEngine, source: AVAudioNode, format: AVAudioFormat) {
+  init(engine: AVAudioEngine, format: AVAudioFormat, render: @escaping AVAudioSourceNodeRenderBlock) {
+    let source = AVAudioSourceNode(format: format, renderBlock: render)
+    engine.attach(source)
     engine.attach(unit)
     unit.rate = 1
     set(0)

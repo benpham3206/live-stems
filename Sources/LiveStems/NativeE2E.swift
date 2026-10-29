@@ -119,6 +119,43 @@ enum NativeE2E {
     let out = URL(fileURLWithPath: args[outputIndex + 1])
     try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
     switch stage {
+    case "six-source":
+      try SixSourceE2E.run(out)
+    case "six-worker":
+      let worker = WorkerClient(model: .sixSource)
+      defer { worker.stop() }
+      try waitStart(worker)
+      guard worker.runningModel == .sixSource else { throw StemError("Six model was not loaded") }
+      let source = try song()
+      let window = AudioWindow(range: FrameRange(generation: 1, start: 0, count: 44100),
+        samples: samples(source, start: 60 * 44100, count: 44100))
+      let result = try separate(worker, window, 1)
+      guard result.sourceCount == 6, result.samples.count == 44100 * 12,
+        result.samples.allSatisfy(\.isFinite), result.samples.contains(where: { abs($0) > 1e-7 })
+      else { throw StemError("Six worker output invalid") }
+      // A source switch keeps this worker: the old session's late answer is dropped, the new
+      // session's job is accepted, and guitar/piano controls survive the same-model attach.
+      guard let core = ls_create(44100, 44100) else { throw StemError("Six-worker core unavailable") }
+      defer { ls_destroy(core) }
+      let old = StemPipeline(core: core), next = StemPipeline(core: core)
+      for (pipeline, generation) in [(old, UInt64(2)), (next, UInt64(3))] {
+        pipeline.sourceCount = 6
+        pipeline.start(generation: generation)
+        pipeline.ingest(samples(source, start: 70 * 44100, count: 44100))
+      }
+      guard let stale = old.job(), let fresh = next.job() else { throw StemError("Switch fixture made no jobs") }
+      let pid = worker.pid
+      next.accept(try separate(worker, stale, 2))
+      next.accept(try separate(worker, fresh, 3))
+      var controls = StemControls()
+      controls.resize(to: 6); controls.gains[4] = 0.3; controls.gains[5] = 0.7; controls.solo = 16
+      controls.resize(to: worker.runningModel.sources.count)
+      guard next.discarded == 1, next.acceptedResults == 1, worker.pid == pid,
+        controls.gains[4] == 0.3, controls.gains[5] == 0.7, controls.solo == 16
+      else { throw StemError("Kept six worker: discarded \(next.discarded), accepted \(next.acceptedResults), controls \(controls.gains)") }
+      try Data("PASS actual Swift WorkerClient six-model offline fixture execution; kept-worker switch drops the stale result, keeps guitar/piano controls\n".utf8)
+        .write(to: out.appendingPathComponent("six-worker.txt"))
+      print("PASS six-worker")
     case "trace":
       try TraceE2E.run(out)
     case "menu":
@@ -157,9 +194,11 @@ enum NativeE2E {
       try SpectrumE2E.run(out)
     case "follow":
       try AudioActivityProbe.check()
-      try SourceActivity.check()
+      let latency = try SourceActivity.check()
       try SourceFollower.check()
-      print("PASS follow · newest player wins, blips and manual picks hold · candidate output streams: \(SourceFollower.playingApps().values.sorted())")
+      let streams = SourceFollower.outputApps(SourceFollower.regularApps(), processes: AudioSession.audioProcesses())
+      try Data("PASS follow \(latency)\n".utf8).write(to: out.appendingPathComponent("follow.txt"))
+      print("PASS follow · newest player wins, blips, gaps and manual picks hold · \(latency) · candidate output streams: \(streams.values.sorted())")
     case "fader-redraw":
       try FaderRedrawE2E.run()
     case "transitions":

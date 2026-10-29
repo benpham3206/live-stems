@@ -31,6 +31,7 @@ final class WorkerClient {
         self.log = try FileHandle(forWritingTo: path)
         self.process.executableURL = LocalSettings.python
         self.process.arguments = [
+          "-I", "-B",
           LocalSettings.source.appendingPathComponent("worker/stem_worker.py").path, "--cache",
           LocalSettings.cache.path, "--trace-dir", LocalSettings.evidence.path, "--model", self.model.rawValue,
         ]
@@ -44,18 +45,39 @@ final class WorkerClient {
         self.process.environment = env
         try self.launch()
         let (h, b) = try self.reply(timeout: 20)
-        guard h.integer(UInt16.self, 6) == 1,
-          let ready = try JSONSerialization.jsonObject(with: b) as? [String: Any],
-          ready["sources"] as? [String] == ["vocals", "drums", "bass", "other"],
-          ready["window_frames"] as? Int == 44100
-        else { throw StemError("Model did not become ready") }
-        self.runningModel = StemModel(rawValue: ready["model"] as? String ?? "") ?? self.model
+        self.runningModel = try Self.readyModel(header: h, body: b)
         completion(.success(()))
       } catch {
         self.stop()
         completion(.failure(error))
       }
     }
+  }
+  static func readyModel(header h: Data, body b: Data) throws -> StemModel {
+    guard h.count == 48 else { throw StemError("Invalid readiness header") }
+    guard h.integer(UInt16.self, 6) == 1,
+      let ready = try JSONSerialization.jsonObject(with: b) as? [String: Any],
+      let loaded = StemModel(rawValue: ready["model"] as? String ?? ""),
+      ready["sources"] as? [String] == loaded.sources,
+      ready["window_frames"] as? Int == 44100
+    else { throw StemError("Model did not become ready") }
+    return loaded
+  }
+  static func decodeResponse(_ response: Data, data: Data, window: AudioWindow, jobID: UInt64, model: StemModel) throws -> StemWindow {
+    guard response.count == 48 else { throw StemError("Invalid output header") }
+    guard response.integer(UInt16.self, 6) == 3,
+      response.integer(UInt64.self, 8) == window.range.generation,
+      response.integer(UInt64.self, 16) == jobID,
+      response.integer(UInt64.self, 24) == window.range.start,
+      response.integer(UInt32.self, 32) == 44100,
+      response.integer(UInt32.self, 36) == window.range.count,
+      response.integer(UInt16.self, 40) == 2, response.integer(UInt16.self, 42) == UInt16(model.sources.count),
+      data.count == Int(window.range.count) * model.sources.count * 8
+    else { throw StemError("Processor output does not match input") }
+    var samples = [Float](repeating: 0, count: data.count / 4)
+    _ = samples.withUnsafeMutableBytes { target in data.copyBytes(to: target) }
+    guard samples.allSatisfy(\.isFinite) else { throw StemError("Invalid output samples") }
+    return StemWindow(range: window.range, samples: samples, sourceCount: model.sources.count)
   }
   private func read(_ count: Int, deadline: Double) throws -> Data {
     var data = Data(count: count)
@@ -137,19 +159,7 @@ final class WorkerClient {
         let body = window.samples.withUnsafeBytes { Data($0) }
         try self.write(h + body, deadline: stemClock() + 5)
         let (response, data) = try self.reply(timeout: 5)
-        guard response.integer(UInt16.self, 6) == 3,
-          response.integer(UInt64.self, 8) == window.range.generation,
-          response.integer(UInt64.self, 16) == jobID,
-          response.integer(UInt64.self, 24) == window.range.start,
-          response.integer(UInt32.self, 32) == 44100,
-          response.integer(UInt32.self, 36) == window.range.count,
-          response.integer(UInt16.self, 40) == 2, response.integer(UInt16.self, 42) == 4,
-          data.count == Int(window.range.count) * 32
-        else { throw StemError("Processor output does not match input") }
-        var samples = [Float](repeating: 0, count: data.count / 4)
-        _ = samples.withUnsafeMutableBytes { target in data.copyBytes(to: target) }
-        guard samples.allSatisfy(\.isFinite) else { throw StemError("Invalid output samples") }
-        completion(.success(StemWindow(range: window.range, samples: samples)))
+        completion(.success(try Self.decodeResponse(response, data: data, window: window, jobID: jobID, model: self.runningModel)))
       } catch { completion(.failure(error)) }
     }
   }

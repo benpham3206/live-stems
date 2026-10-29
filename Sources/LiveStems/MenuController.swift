@@ -1,12 +1,13 @@
 import AppKit
 import OSLog
 
-/// The app has no menu bar to carry Cmd+W (close), Cmd+Q (quit), Cmd+1-4
-/// (cycle a stem) and Cmd+5 (cycle the spectrum), so the panel handles them itself.
+/// The app has no menu bar to carry Cmd+W (close), Cmd+Q (quit), Cmd+1-6
+/// (cycle a stem) and Cmd+` (cycle the spectrum), so the panel handles them itself.
 final class PanelWindow: NSWindow {
   var quit: () -> Void = {}
   var cycleStem: (Int) -> Void = { _ in }
   var cycleSpectrum: () -> Void = {}
+  var changeTrack: (Bool) -> Void = { _ in }
   var seekRelative: (Bool) -> Void = { _ in }
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
@@ -17,11 +18,15 @@ final class PanelWindow: NSWindow {
     guard event.type == .keyDown, modifiers == .command else {
       return super.performKeyEquivalent(with: event)
     }
+    if [123, 124].contains(event.keyCode) {
+      if !event.isARepeat { changeTrack(event.keyCode == 124) }
+      return true
+    }
     switch event.charactersIgnoringModifiers {
     case "w": windowToClose.performClose(nil)
     case "q": quit()
-    case "1", "2", "3", "4": cycleStem(Int(event.charactersIgnoringModifiers!)! - 1)
-    case "5": cycleSpectrum()
+    case "1", "2", "3", "4", "5", "6": cycleStem(Int(event.charactersIgnoringModifiers!)! - 1)
+    case "`": cycleSpectrum()
     default: return super.performKeyEquivalent(with: event)
     }
     return true
@@ -57,6 +62,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     spectrum.window.cycleStem = window.cycleStem
     spectrum.window.cycleSpectrum = window.cycleSpectrum
     spectrum.window.seekRelative = window.seekRelative
+    spectrum.window.changeTrack = window.changeTrack
     return spectrum
   }()
   private var sourcePicker: NSPopUpButton { panel.sourcePicker }
@@ -95,6 +101,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       guard let self else { return }
       self.seek(forward ? self.panel.forward : self.panel.rewind)
     }
+    window.changeTrack = { [weak self] in self?.session.changeTrack(forward: $0) }
     window.level = .floating
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
@@ -120,6 +127,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       blur.addSubview(panel)
       window.contentView = blur
     }
+    panel.modelPicker.menu = modelMenu()
+    panel.modelPicker.menu?.insertItem(withTitle: "Model", action: nil, keyEquivalent: "", at: 0)
     // Any open app can be the source; the list refreshes each time it opens.
     sourcePicker.menu?.delegate = self
     sourcePicker.target = self
@@ -137,7 +146,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     }
     for (index, strip) in panel.strips.enumerated() {
       for (control, tag, action) in [(strip.fader, index, #selector(slide(_:))),
-        (strip.mute, index, #selector(check(_:))), (strip.solo, index + 4, #selector(check(_:)))] as [(NSControl, Int, Selector)] {
+        (strip.mute, index, #selector(check(_:))), (strip.solo, index + 6, #selector(check(_:)))] as [(NSControl, Int, Selector)] {
         control.tag = tag
         control.target = self
         control.action = action
@@ -152,7 +161,23 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       }
       self.presentWindow(reason: "readiness", userInitiated: false)
     }
-    session.onModel = { [weak self] in self?.runningModel = $0 }
+    session.onModel = { [weak self] model in
+      guard let self else { return }
+      self.runningModel = model
+      self.controls.resize(to: model.sources.count)
+      for (index, strip) in self.panel.strips.enumerated() {
+        strip.fader.floatValue = index < self.controls.gains.count ? self.controls.gains[index] : 1
+        strip.mute.state = self.controls.mute & (1 << UInt32(index)) != 0 ? .on : .off
+        strip.solo.state = self.controls.solo & (1 << UInt32(index)) != 0 ? .on : .off
+        if index < self.controls.gains.count {
+          strip.show(silent: self.controls.effectiveGains[index] == 0, soloed: strip.solo.state == .on)
+        }
+      }
+      let previousWidth = self.window.frame.width
+      self.panel.setSourceCount(model.sources.count)
+      self.panel.window?.setContentSize(self.panel.frame.size)
+      if self.window.frame.width != previousWidth { self.positionWindow() }
+    }
     session.onStatus = { [weak self] text, output, enabled, stems in
       self?.applyStatus(text: text, output: output, enabled: enabled, stems: stems)
     }
@@ -183,6 +208,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     applyStatus(text: "E2E", output: "E2E", enabled: enabled, stems: true)
   }
   func e2eNotifyReadyForTest() { session.onReady?() }
+  func e2eApplyModelForTest(_ model: StemModel) { session.onModel?(model) }
   private func applyStatus(text: String, output: String, enabled: Bool, stems: Bool) {
     active = enabled
     panel.statusLabel.stringValue = text
@@ -256,15 +282,18 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     Self.followsPlaying.toggle()
     if !Self.followsPlaying { sourceActivity.clear() }
   }
+  /// Acts on each measurement as it arrives, stamped with its own time.
   private func follow() {
     guard Self.followsPlaying else { return }
-    let playing = sourceActivity.playing(candidates: SourceFollower.playingApps())
-    guard let id = follower.next(current: session.source.bundleID, playing: Set(playing.keys), now: stemClock()),
-      let name = playing[id] else { return }
-    let source = AudioSource(bundleID: id, name: name)
-    AudioSource.saved = source
-    session.setSource(source)
-    fillSources(current: source)
+    sourceActivity.poll(apps: SourceFollower.regularApps()) { [weak self] playing, measured in
+      guard let self, Self.followsPlaying,
+        let id = self.follower.next(current: self.session.source.bundleID, playing: Set(playing.keys), now: measured),
+        let name = playing[id] else { return }
+      let source = AudioSource(bundleID: id, name: name)
+      AudioSource.saved = source
+      self.session.setSource(source)
+      self.fillSources(current: source)
+    }
   }
   @objc private func pickSource() {
     guard let item = sourcePicker.selectedItem, let id = item.representedObject as? String else { return }
@@ -283,7 +312,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private func resetControls() {
     panel.pitchPicker.selectItem(withTag: 0)
     session.setTranspose(0)
-    controls = StemControls()
+    controls = StemControls(gains: Array(repeating: 1, count: runningModel?.sources.count ?? 4))
     for strip in panel.strips {
       strip.fader.floatValue = 1
       strip.mute.state = .off
@@ -340,16 +369,17 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     applyControls()
   }
   @objc private func check(_ sender: NSButton) {
-    let mask: UInt32 = 1 << UInt32(sender.tag % 4)
-    if sender.tag < 4 {
+    let mask: UInt32 = 1 << UInt32(sender.tag % 6)
+    if sender.tag < 6 {
       if sender.state == .on { controls.mute |= mask } else { controls.mute &= ~mask }
     } else {
       if sender.state == .on { controls.solo |= mask } else { controls.solo &= ~mask }
     }
     applyControls()
   }
-  /// Cmd+1-4: default, then muted, then soloed, then default again.
+  /// Cmd+1-6: default, then muted, then soloed, then default again.
   private func cycleStem(_ index: Int) {
+    guard index < controls.gains.count else { return }
     let strip = panel.strips[index], mask: UInt32 = 1 << UInt32(index)
     if strip.mute.state == .on {
       strip.mute.state = .off
@@ -366,7 +396,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     applyControls()
   }
   @objc private func muteAll(_ sender: NSButton) {
-    controls.mute = sender.state == .on ? 0b1111 : 0
+    controls.mute = sender.state == .on ? ((1 << UInt32(controls.gains.count)) - 1) : 0
     for strip in panel.strips { strip.mute.state = sender.state }
     applyControls()
   }
@@ -376,7 +406,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     applyControls()
   }
   private func applyControls() {
-    panel.muteAllButton.state = controls.mute == 0b1111 ? .on : .off
+    panel.muteAllButton.state = controls.mute == ((1 << UInt32(controls.gains.count)) - 1) ? .on : .off
     panel.clearSoloButton.state = controls.solo != 0 ? .on : .off
     for (index, (strip, gain)) in zip(panel.strips, controls.effectiveGains).enumerated() {
       strip.show(silent: gain == 0, soloed: controls.solo & (1 << UInt32(index)) != 0)
@@ -441,7 +471,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     return menu
   }
   @objc private func showSpectrum() { spectrum.show() }
-  /// Automatic, Fine-tuned, Standard; in the Dock and status menus and behind the analyzer's gear.
+  /// All model choices, including optional six stems, in the Dock, status menu, and analyzer gear.
   func modelMenu() -> NSMenu {
     let models = NSMenu(title: "Model")
     for model in StemModel.allCases {

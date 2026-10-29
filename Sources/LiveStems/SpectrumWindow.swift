@@ -123,7 +123,7 @@ final class SpectrumWindowController: NSObject, NSWindowDelegate {
     timer = Timer(timeInterval: 1.0 / Double(SpectrumView.rowsPerSecond), repeats: true) { [weak self] _ in self?.tick() }
     RunLoop.main.add(timer!, forMode: .common)
   }
-  /// Cmd+5: closed, then 3D, then 2D, then closed.
+  /// Cmd+`: closed, then 3D, then 2D, then closed.
   func cycle() {
     if !window.isVisible {
       mode.selectedIndex = 0

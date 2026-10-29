@@ -92,13 +92,37 @@ final class ChannelStrip: Backdrop {
   }
 }
 
-/// The controls panel content: source and Reset, status, four channel strips,
+/// The controls panel content: source and Reset, status, four or six channel strips,
 /// the All stems row, seek and pitch controls, and Quit. Layout only; MenuController wires the actions.
 final class ControlsPanel: NSView {
+  func setSourceCount(_ count: Int) {
+    setFrameSize(NSSize(width: count == 6 ? 528 : 360, height: 612))
+    for (index, strip) in strips.enumerated() { strip.isHidden = index >= count }
+    let right = frame.width - 14, width = right - 14
+    sourcePicker.frame.size.width = width - 200
+    spectrumButton.frame.origin.x = right - 192
+    resetButton.frame.origin.x = right - 92
+    statusLabel.frame.size.width = width
+    outputLabel.frame.size.width = width - 21
+    allRow.frame.size.width = width
+    muteAllButton.frame.origin.x = width - 86
+    clearSoloButton.frame.origin.x = width - 44
+    let seekWidth = (width - 124) / 2
+    rewind.frame.size.width = seekWidth
+    seekStep.frame.origin.x = 14 + seekWidth + 8
+    forward.frame.origin.x = right - seekWidth
+    forward.frame.size.width = seekWidth
+    pitchPicker.frame.size.width = width - 128
+    pitchReset.frame.origin.x = right - 80
+    quitButton.frame.size.width = width - 168
+    modelPicker.frame = NSRect(x: right - 160, y: 14, width: 160, height: 32)
+  }
   static let size = NSSize(width: 360, height: 612)
   static let muteColor = NSColor.systemBlue
   static let soloColor = NSColor(srgbRed: 1, green: 0.82, blue: 0.2, alpha: 1)
   let sourcePicker = NSPopUpButton(frame: NSRect(x: 14, y: 550, width: 196, height: 28), pullsDown: true)
+  let allRow = Backdrop()
+  let modelPicker = NSPopUpButton(frame: .zero, pullsDown: true)
   let spectrumButton = NSButton(frame: NSRect(x: 214, y: 550, width: 36, height: 28))
   let resetButton = NSButton(title: "Reset", target: nil, action: nil)
   let statusLabel = NSTextField(labelWithString: ""), outputLabel = NSTextField(labelWithString: "")
@@ -114,9 +138,9 @@ final class ControlsPanel: NSView {
     let colors: [NSColor] = [.systemPink, .systemOrange, .systemPurple, .systemGreen]
     // SF Symbols has no drum; a transient waveform stands in. The stand mic is new in SF Symbols 8.
     let symbols = [["microphone.dynamic.on.stand", "microphone.fill", "mic.fill"], ["waveform.path"],
-      ["guitars.fill"], ["sparkles"]]
-    strips = ["Vocals", "Drums", "Bass", "Other"].enumerated().map { index, name in
-      ChannelStrip(name: name, color: colors[index], icon: symbol(symbols[index]))
+      ["guitars.fill"], ["sparkles"], ["guitars.fill"], ["pianokeys"]]
+    strips = ["Vocals", "Drums", "Bass", "Other", "Guitar", "Piano"].enumerated().map { index, name in
+      ChannelStrip(name: name, color: colors[index % colors.count], icon: symbol(symbols[index]))
     }
     super.init(frame: NSRect(origin: .zero, size: Self.size))
     sourcePicker.setAccessibilityLabel("Audio source")
@@ -133,8 +157,9 @@ final class ControlsPanel: NSView {
     spectrumButton.controlSize = .large
     spectrumButton.image = symbol(["chart.bar.xaxis", "waveform"]).withSymbolConfiguration(.init(scale: .large))
     if #available(macOS 26.0, *) { spectrumButton.borderShape = .capsule }
-    spectrumButton.imagePosition = .imageOnly
-    spectrumButton.toolTip = "Spectrum Analyzer"
+    spectrumButton.title = "Spectrum"
+    spectrumButton.imagePosition = .imageLeading
+    spectrumButton.toolTip = "Spectrum Analyzer (⌘`)"
     spectrumButton.setAccessibilityLabel("Spectrum Analyzer")
     statusLabel.frame = NSRect(x: 16, y: 524, width: 328, height: 18)
     statusLabel.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -149,7 +174,7 @@ final class ControlsPanel: NSView {
     for (index, strip) in strips.enumerated() {
       strip.setFrameOrigin(NSPoint(x: 14 + CGFloat(index) * 84, y: 178))
     }
-    let allRow = Backdrop(frame: NSRect(x: 14, y: 128, width: 332, height: 40))
+    allRow.frame = NSRect(x: 14, y: 128, width: 332, height: 40)
     let allLabel = NSTextField(labelWithString: "All stems")
     allLabel.font = .systemFont(ofSize: 13, weight: .medium)
     allLabel.frame = NSRect(x: 12, y: 11, width: 120, height: 18)
@@ -161,7 +186,7 @@ final class ControlsPanel: NSView {
     clearSoloButton.setAccessibilityLabel("Clear all solos")
     clearSoloButton.toolTip = "Clear all solos"
     for view in [allLabel, muteAllButton, clearSoloButton] { allRow.addSubview(view) }
-    for view in [sourcePicker, spectrumButton, resetButton, statusLabel, headphones, outputLabel, allRow, quitButton] + strips as [NSView] {
+    for view in [sourcePicker, spectrumButton, resetButton, statusLabel, headphones, outputLabel, allRow, quitButton, modelPicker] + strips as [NSView] {
       addSubview(view)
     }
     let keyLabel = NSTextField(labelWithString: "Key")
@@ -185,12 +210,16 @@ final class ControlsPanel: NSView {
     seekStep.setAccessibilityLabel("Seek interval")
     rewind.frame = NSRect(x: 14, y: 88, width: 104, height: 30)
     forward.frame = NSRect(x: 242, y: 88, width: 104, height: 30)
+    modelPicker.setAccessibilityLabel("Separation model")
+    modelPicker.toolTip = "Choose the stem separation model"
     transportLabel.isHidden = true
     transportLabel.frame = NSRect(x: 16, y: 499, width: 328, height: 17)
     transportLabel.font = .systemFont(ofSize: 11)
     transportLabel.textColor = .secondaryLabelColor
     transportLabel.lineBreakMode = .byTruncatingTail
     for view in [keyLabel, pitchPicker, pitchReset, seekStep, rewind, forward, transportLabel] { addSubview(view) }
+    spectrumButton.frame.size.width = 96
+    setSourceCount(4)
   }
   required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 }

@@ -276,6 +276,30 @@ final class SpotifyState {
     }
   }
 
+  /// Track navigation shares seek cancellation and the serialized Apple Event queue.
+  func changeTrack(forward: Bool, completion: @escaping (Error?) -> Void) {
+    cancelSeeks()
+    let generation = syncGeneration()
+    readerQueue.async {
+      do {
+        try self.checkSeek(generation)
+        let verb = forward ? "next track" : "previous track"
+        var error: NSDictionary?
+        guard let script = NSAppleScript(source: "if application \"Spotify\" is running then tell application \"Spotify\" to \(verb)") else {
+          throw StemError("Cannot prepare Spotify track navigation")
+        }
+        script.executeAndReturnError(&error)
+        if let error { throw StemError("Spotify track navigation failed: \(error)") }
+        completion(nil)
+      } catch { completion(error) }
+    }
+  }
+  private func syncGeneration() -> UInt64 {
+    var value: UInt64 = 0
+    syncState { value = seekGeneration }
+    return value
+  }
+
   private static func writePosition(_ target: Double, expectedTrackID: String) throws {
     // POSIX formatting keeps the decimal point independent of the user's locale.
     // Only validated numeric data crosses into AppleScript.

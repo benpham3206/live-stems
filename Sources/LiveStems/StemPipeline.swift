@@ -53,6 +53,8 @@ final class StemPipeline {
     let current = snapshot.position + (snapshot.isPlaying ? captureHost - snapshotHost : 0)
     return current - Double(end - frame) / 44100
   }
+  var sourceCount = 4
+  private var channels: Int { sourceCount * 2 }
   init(core: OpaquePointer) { self.core = core }
   var cacheBytes: Int {
     ready.reduce(0) { $0 + $1.samples.count * MemoryLayout<Float>.size }
@@ -263,7 +265,7 @@ final class StemPipeline {
     }
     inflight = nil
     guard job.version == version, result.range.generation == generation,
-      result.samples.count == windowFrames * 8, result.samples.allSatisfy(\.isFinite) else {
+      result.sourceCount == sourceCount, result.samples.count == windowFrames * channels, result.samples.allSatisfy(\.isFinite) else {
       discarded += 1
       onTrace?(TraceRecord(event: "rejected-context", generation: generation, windowStart: result.range.start))
       return
@@ -282,33 +284,18 @@ final class StemPipeline {
       onTrace?(TraceRecord(event: "partial-late", generation: generation, sourceFrame: outputPosition,
         sourceEnd: job.core.upperBound, windowStart: result.range.start, lateFrames: coreLo - job.core.lowerBound))
     }
-    var coreSamples = Array(result.samples[(coreLo - job.window.lowerBound) * 8..<((job.core.upperBound - job.window.lowerBound) * 8)])
-    // The next estimate overlaps the previous right-context tail. Blend the
-    // uncommitted overlap instead of stepping between two estimates.
+    var coreSamples = Array(result.samples[(coreLo - job.window.lowerBound) * channels..<((job.core.upperBound - job.window.lowerBound) * channels)])
+    // Blend once, from the old right-context tail into the new estimate.
+    // Start at the commit frontier if partly late; committed frames stay old.
+    // Blending the preceding ready chunk too would restart at old here.
     if let tail = provisional, tail.range.upperBound > coreLo, tail.range.lowerBound < job.core.upperBound {
       let overlap = max(tail.range.lowerBound, coreLo)..<min(tail.range.upperBound, job.core.upperBound)
       for frame in overlap.lowerBound..<min(overlap.upperBound, overlap.lowerBound + fade) {
         let amount = Float(frame - overlap.lowerBound + 1) / Float(fade + 1)
-        for channel in 0..<8 {
-          coreSamples[(frame - coreLo) * 8 + channel] =
-            tail.samples[(frame - tail.range.lowerBound) * 8 + channel] * (1 - amount)
-            + coreSamples[(frame - coreLo) * 8 + channel] * amount
-        }
-      }
-    }
-    // Join two estimates of the same source frames. Touch only frames that
-    // have not entered the output queue; never replace already played audio.
-    if outputPosition < job.core.lowerBound,
-      let last = ready.indices.last, ready[last].range.upperBound == job.core.lowerBound
-    {
-      let overlapStart = job.core.lowerBound - fade
-      for frame in max(outputPosition, overlapStart)..<job.core.lowerBound {
-        let amount = Float(frame - overlapStart + 1) / Float(fade + 1)
-        let previous = (frame - ready[last].range.lowerBound) * 8
-        let incoming = (frame - job.window.lowerBound) * 8
-        for channel in 0..<8 {
-          ready[last].samples[previous + channel] = ready[last].samples[previous + channel] * (1 - amount)
-            + result.samples[incoming + channel] * amount
+        for channel in 0..<channels {
+          coreSamples[(frame - coreLo) * channels + channel] =
+            tail.samples[(frame - tail.range.lowerBound) * channels + channel] * (1 - amount)
+            + coreSamples[(frame - coreLo) * channels + channel] * amount
         }
       }
     }
@@ -317,9 +304,9 @@ final class StemPipeline {
     // if the next result arrives late; that result then replaces it.
     let tailLo = max(job.core.upperBound, outputPosition)
     if tailLo < job.window.upperBound {
-      let at = (tailLo - job.window.lowerBound) * 8
+      let at = (tailLo - job.window.lowerBound) * channels
       provisional = Chunk(range: tailLo..<job.window.upperBound,
-        samples: Array(result.samples[at..<at + (job.window.upperBound - tailLo) * 8]))
+        samples: Array(result.samples[at..<at + (job.window.upperBound - tailLo) * channels]))
     } else { provisional = nil }
     acceptedResults += 1
     if coreLo == job.core.lowerBound { gate.onTimeResult() } else { gate.partialResult() }
@@ -331,10 +318,10 @@ final class StemPipeline {
     weight = gate.weight(from: weight, toward: target, seamStep: 1 / Float(fade))
   }
   private func block(start: Int, count: Int) -> [Float] {
-    var samples = [Float](repeating: 0, count: count * 11)
+    var samples = [Float](repeating: 0, count: count * (channels + 3))
     for i in 0..<count {
-      let frame = start + i, out = i * 11, source = (frame - base) * 2
-      samples[out + 8] = history[source]; samples[out + 9] = history[source + 1]
+      let frame = start + i, out = i * (channels + 3), source = (frame - base) * 2
+      samples[out + channels] = history[source]; samples[out + channels + 1] = history[source + 1]
       let dip: Float = dipFade.contains(frame) ? Float(frame - dipFade.lowerBound + 1) / Float(dipFade.count) : 1
       let usedProvisional: Bool
       // Targets never pull weight down while estimates cover the frame. A
@@ -343,8 +330,8 @@ final class StemPipeline {
         var lo = index
         while lo > 0 && ready[lo - 1].range.upperBound == ready[lo].range.lowerBound { lo -= 1 }
         blend(toward: min(1, max(Float(frame - ready[lo].range.lowerBound + 1) / Float(fade), weight)))
-        let offset = (frame - ready[index].range.lowerBound) * 8
-        for channel in 0..<8 { samples[out + channel] = ready[index].samples[offset + channel] }
+        let offset = (frame - ready[index].range.lowerBound) * channels
+        for channel in 0..<channels { samples[out + channel] = ready[index].samples[offset + channel] }
         usedProvisional = false
       } else if let tail = provisional, tail.range.contains(frame) {
         // A late result falls back to the previous tail estimate, never to
@@ -353,8 +340,8 @@ final class StemPipeline {
         // certain: start fading now, while there is stem data to fade with.
         if gate.isOpen, tail.range.upperBound - frame <= gate.fadeOut { gate.miss(at: frame) }
         blend(toward: min(1, max(Float(frame - tail.range.lowerBound + 1) / Float(fade), weight)))
-        let offset = (frame - tail.range.lowerBound) * 8
-        for channel in 0..<8 { samples[out + channel] = tail.samples[offset + channel] }
+        let offset = (frame - tail.range.lowerBound) * channels
+        for channel in 0..<channels { samples[out + channel] = tail.samples[offset + channel] }
         usedProvisional = true
       } else {
         if weight > 0 { gate.miss(at: frame) }
@@ -366,8 +353,8 @@ final class StemPipeline {
         onTrace?(TraceRecord(event: usedProvisional ? "provisional-cover" : "provisional-end",
           generation: generation, sourceFrame: frame))
       }
-      if dip < 1 { for channel in 0..<10 { samples[out + channel] *= dip } }
-      samples[out + 10] = weight
+      if dip < 1 { for channel in 0..<(channels + 2) { samples[out + channel] *= dip } }
+      samples[out + channels + 2] = weight
       if traceCovered != (weight >= 0.999) {
         traceCovered = weight >= 0.999
         onTrace?(TraceRecord(event: traceCovered ? "coverage-restored" : "coverage-gap",
@@ -405,7 +392,7 @@ final class StemPipeline {
     let start = outputPosition, samples = block(start: start, count: count)
     let endHost = captureHost - Double(end - deadline) / 44100
     let wrote = samples.withUnsafeBufferPointer {
-      ls_output_write_timed(core, $0.baseAddress, UInt32(count), UInt64(start), endHost)
+      ls_output_write_timed_counted(core, $0.baseAddress, UInt32(count), UInt32(sourceCount), UInt64(start), endHost)
     }
     guard wrote == count else { onFailure?("Playback buffer full"); return }
     outputPosition += count

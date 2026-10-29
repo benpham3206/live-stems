@@ -43,3 +43,13 @@ void ls_flush_output_faded(LSCore * _Null_unspecified core, uint32_t fade_frames
 void ls_render(LSCore * _Null_unspecified core, uint32_t frames, AudioBufferList * _Null_unspecified output);
 void ls_render_timed(LSCore * _Null_unspecified core, uint32_t frames, AudioBufferList * _Null_unspecified output, const AudioTimeStamp * _Nullable time);
 OSStatus ls_capture_callback(AudioDeviceID device, const AudioTimeStamp * _Nonnull now, const AudioBufferList * _Nonnull input, const AudioTimeStamp * _Nonnull input_time, AudioBufferList * _Nonnull output, const AudioTimeStamp * _Nonnull output_time, void * _Nullable context);
+
+// Counted APIs accept only 4 or 6; invalid counts return 0 without buffer access.
+// Frames: stereo stems (vocals, drums, bass, other, [guitar, piano]),
+// then stereo original, then weight: 11 floats for 4, 15 for 6.
+// Count is stored per queued frame. Legacy APIs always use exactly 4/11.
+// Controls read count gains, clamp to [0,1], and mask mute/solo to count bits.
+// Meter take writes and clears exactly count pre-fader peaks. Returns 1 on success.
+int ls_controls_counted(LSCore *core, const float *gains, uint32_t count, uint32_t mute, uint32_t solo);
+int ls_take_meters_counted(LSCore *core, float *peaks, uint32_t count);
+uint32_t ls_output_write_timed_counted(LSCore *core, const float *samples, uint32_t frames, uint32_t count, uint64_t source_start, double capture_end_host_seconds);

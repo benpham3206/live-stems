@@ -23,7 +23,7 @@ enum PitchE2E {
     try sourceSwitch(out)
     try panelActions(out)
     try JSONSerialization.data(withJSONObject: ["status": "pass", "pitch": measured,
-      "checks": ["production pitch graph", "dynamic pitch and reset", "rapid explicit seeks flush queues",
+      "checks": ["production pitch graph", "dynamic pitch and reset", "full post-reset silence", "exact zero bypass", "rapid explicit seeks flush queues",
         "stale result rejection", "pitch-only takeover", "AppKit seek actions and unsupported source"]], options: [.prettyPrinted, .sortedKeys])
       .write(to: out.appendingPathComponent("pitch.json"))
     print("PASS pitch · production graph, dynamic reset, rapid seeks, and panel actions")
@@ -39,7 +39,7 @@ enum PitchE2E {
     let engine = AVAudioEngine()
     let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
     var frame = 0, sourceHz = 440.0
-    let source = AVAudioSourceNode(format: format) { _, _, count, list in
+    let pitch = PitchShift(engine: engine, format: format) { _, _, count, list in
       for buffer in UnsafeMutableAudioBufferListPointer(list) {
         let data = buffer.mData!.assumingMemoryBound(to: Float.self)
         for i in 0..<Int(count) { data[i] = Float(0.2 * sin(2 * .pi * sourceHz * Double(frame + i) / 44100)) }
@@ -47,8 +47,6 @@ enum PitchE2E {
       frame += Int(count)
       return noErr
     }
-    engine.attach(source)
-    let pitch = PitchShift(engine: engine, source: source, format: format)
     try require(pitch.isBypassed, "Zero pitch does not bypass the effect")
     try require(!pitch.set(13) && pitch.isBypassed, "Out-of-range pitch changed the effect")
     try require(pitch.set(semitones), "Valid pitch rejected")
@@ -69,17 +67,38 @@ enum PitchE2E {
       return result
     }
     let original = try pull(88200)
+    if semitones == 0 {
+      var error: Float = 0
+      for (index, value) in original.enumerated() {
+        let expected = Float(0.2 * sin(2 * Double.pi * 440 * Double(index) / 44100))
+        error = max(error, abs(value - expected))
+      }
+      try require(error < 0.000001, "Zero pitch altered the source samples")
+    }
     pitch.set(2)
     let changed = try pull(44100)
     try require(abs(frequency(Array(changed[11025...])) - 440 * pow(2, 2.0 / 12)) < 2,
       "Changing pitch while rendering did not reach the new key")
     engine.pause()
     pitch.reset()
-    sourceHz = 880
+    sourceHz = 0
     try engine.start()
+    let silence = try pull(44100)
+    try require(silence.allSatisfy { abs($0) < 0.000001 },
+      "Pitch reset leaked old audio during the full post-reset interval")
+    sourceHz = 880
     let reset = try pull(44100)
     try require(abs(frequency(Array(reset[11025...])) - 880 * pow(2, 2.0 / 12)) < 2,
       "Pitch reset kept old signal or lost the selected key")
+    for offset in [-12, 12, -2, 2] {
+      pitch.set(offset)
+      let samples = try pull(22050)
+      try require(samples.allSatisfy { $0.isFinite && abs($0) < 1 },
+        "Repeated pitch changes exhausted the bounded output queue")
+    }
+    pitch.set(0)
+    let bypass = try pull(512)
+    try require(pitch.isBypassed && bypass.contains { abs($0) > 0.1 }, "Returning to zero retained pitch latency")
     return original
   }
 
@@ -152,6 +171,11 @@ enum PitchE2E {
         charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!
       return window.performKeyEquivalent(with: event)
     }
+    var tracks = [Bool]()
+    guard let panelWindow = window as? PanelWindow else { throw StemError("Missing panel keyboard handler") }
+    panelWindow.changeTrack = { tracks.append($0) }
+    try require(shortcut(123, modifiers: .command) && shortcut(124, modifiers: .command)
+      && tracks == [false, true], "Command arrows did not select previous/next track")
     let shortcutStart = stemClock()
     try require(shortcut(124), "Forward shortcut was not handled")
     try require(stemClock() - shortcutStart < 0.25, "Shortcut blocked the UI waiting for Spotify")
