@@ -92,9 +92,13 @@ final class ChannelStrip: Backdrop {
   }
 }
 
-/// The controls panel content: source and Reset, status, four channel strips,
+/// The controls panel content: source and Reset, status, four or six channel strips,
 /// the All stems row, seek and pitch controls, and Quit. Layout only; MenuController wires the actions.
 final class ControlsPanel: NSView {
+  func setSourceCount(_ count: Int) {
+    setFrameSize(NSSize(width: count == 6 ? 528 : 360, height: 612))
+    for (index, strip) in strips.enumerated() { strip.isHidden = index >= count }
+  }
   static let size = NSSize(width: 360, height: 612)
   static let muteColor = NSColor.systemBlue
   static let soloColor = NSColor(srgbRed: 1, green: 0.82, blue: 0.2, alpha: 1)
@@ -114,9 +118,9 @@ final class ControlsPanel: NSView {
     let colors: [NSColor] = [.systemPink, .systemOrange, .systemPurple, .systemGreen]
     // SF Symbols has no drum; a transient waveform stands in. The stand mic is new in SF Symbols 8.
     let symbols = [["microphone.dynamic.on.stand", "microphone.fill", "mic.fill"], ["waveform.path"],
-      ["guitars.fill"], ["sparkles"]]
-    strips = ["Vocals", "Drums", "Bass", "Other"].enumerated().map { index, name in
-      ChannelStrip(name: name, color: colors[index], icon: symbol(symbols[index]))
+      ["guitars.fill"], ["sparkles"], ["guitars.fill"], ["pianokeys"]]
+    strips = ["Vocals", "Drums", "Bass", "Other", "Guitar", "Piano"].enumerated().map { index, name in
+      ChannelStrip(name: name, color: colors[index % colors.count], icon: symbol(symbols[index]))
     }
     super.init(frame: NSRect(origin: .zero, size: Self.size))
     sourcePicker.setAccessibilityLabel("Audio source")
@@ -149,6 +153,7 @@ final class ControlsPanel: NSView {
     for (index, strip) in strips.enumerated() {
       strip.setFrameOrigin(NSPoint(x: 14 + CGFloat(index) * 84, y: 178))
     }
+    setSourceCount(4)
     let allRow = Backdrop(frame: NSRect(x: 14, y: 128, width: 332, height: 40))
     let allLabel = NSTextField(labelWithString: "All stems")
     allLabel.font = .systemFont(ofSize: 13, weight: .medium)

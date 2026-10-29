@@ -74,6 +74,13 @@ enum MenuE2E {
       let window = controller.e2eWindow
     else { throw StemError("Menu E2E could not access the AppKit controls") }
     var checks = [[String: Any]]()
+    let rightClickMenu = controller.statusMenu()
+    guard let models = rightClickMenu.items.first(where: { $0.title == "Model" })?.submenu,
+      let sixModel = models.items.first(where: { $0.representedObject as? String == StemModel.sixSource.rawValue })
+    else { throw StemError("Menu-bar right-click menu is missing Six stems") }
+    try require(controller.validateMenuItem(sixModel) == StemModel.sixSource.isDownloaded,
+      "Six-stem menu availability does not match installed weights")
+    checks.append(["name": "right_click_six_model", "enabled": StemModel.sixSource.isDownloaded])
     defer { window.orderOut(nil) }
 
     let requiredMask: NSWindow.StyleMask = [.titled, .closable]
@@ -263,7 +270,7 @@ enum MenuE2E {
     for (index, name) in stemNames.enumerated() {
       let mute = try control(named: "\(name) Mute", in: window), solo = try control(named: "\(name) Solo", in: window)
       let faders = descendants(of: window.contentView!).compactMap { $0 as? NSSlider }
-      try require(faders.count == 4, "Expected four faders, found \(faders.count)")
+      try require(faders.count == 6, "Expected six allocated faders, found \(faders.count)")
       let fader = faders[index]
       var seen = [String](), faded = [Bool]()
       for _ in 0..<4 {
@@ -285,6 +292,31 @@ enum MenuE2E {
       try require(mute.state == .off, "\(name) left muted")
     }
     checks.append(["name": "cmd_1_to_4_cycle_stems"])
+    controller.e2eApplyModelForTest(.sixSource)
+    let sixFaders = descendants(of: window.contentView!).compactMap { $0 as? NSSlider }
+    try require(window.contentView!.frame.width == 528, "Six-source panel did not widen")
+    for (index, name) in [(4, "Guitar"), (5, "Piano")] {
+      let mute = try control(named: "\(name) Mute", in: window)
+      let solo = try control(named: "\(name) Solo", in: window)
+      try require(!mute.isHiddenOrHasHiddenAncestor && !solo.isHiddenOrHasHiddenAncestor, "\(name) controls stayed hidden")
+      let fader = sixFaders[index]
+      fader.floatValue = 0.4
+      _ = NSApp.sendAction(fader.action!, to: fader.target, from: fader)
+      mute.performClick(nil); solo.performClick(nil)
+      try require(controller.e2eControls.gains[index] == 0.4 && controller.e2eControls.mute & (1 << UInt32(index)) != 0
+        && controller.e2eControls.solo & (1 << UInt32(index)) != 0, "\(name) actions did not reach controls")
+    }
+    controller.e2eApplyModelForTest(.sixSource)
+    try require(controller.e2eControls.gains[4] == 0.4 && controller.e2eControls.gains[5] == 0.4
+      && controller.e2eControls.mute == 48 && controller.e2eControls.solo == 48, "Same model reset six-source controls")
+    controller.e2eApplyModelForTest(.standard)
+    try require(window.contentView!.frame.width == 360 && controller.e2eControls.gains.count == 4
+      && controller.e2eControls.mute == 0 && controller.e2eControls.solo == 0, "Four-source return retained six-source state")
+    try require(sixFaders[4].isHiddenOrHasHiddenAncestor && sixFaders[5].isHiddenOrHasHiddenAncestor, "Inactive strips remained visible")
+    controller.e2eApplyModelForTest(.sixSource)
+    try require(sixFaders[4].floatValue == 1 && sixFaders[5].floatValue == 1, "Reactivated strips retained stale faders")
+    controller.e2eApplyModelForTest(.standard)
+    checks.append(["name": "six_source_actions_and_model_return"])
     // Cmd+5 steps the spectrum through closed, 3D, 2D, closed.
     var views = [String]()
     for _ in 0..<4 {

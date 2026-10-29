@@ -144,7 +144,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     }
     for (index, strip) in panel.strips.enumerated() {
       for (control, tag, action) in [(strip.fader, index, #selector(slide(_:))),
-        (strip.mute, index, #selector(check(_:))), (strip.solo, index + 4, #selector(check(_:)))] as [(NSControl, Int, Selector)] {
+        (strip.mute, index, #selector(check(_:))), (strip.solo, index + 6, #selector(check(_:)))] as [(NSControl, Int, Selector)] {
         control.tag = tag
         control.target = self
         control.action = action
@@ -159,7 +159,21 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       }
       self.presentWindow(reason: "readiness", userInitiated: false)
     }
-    session.onModel = { [weak self] in self?.runningModel = $0 }
+    session.onModel = { [weak self] model in
+      guard let self else { return }
+      self.runningModel = model
+      self.controls.resize(to: model.sources.count)
+      for (index, strip) in self.panel.strips.enumerated() {
+        strip.fader.floatValue = index < self.controls.gains.count ? self.controls.gains[index] : 1
+        strip.mute.state = self.controls.mute & (1 << UInt32(index)) != 0 ? .on : .off
+        strip.solo.state = self.controls.solo & (1 << UInt32(index)) != 0 ? .on : .off
+        if index < self.controls.gains.count {
+          strip.show(silent: self.controls.effectiveGains[index] == 0, soloed: strip.solo.state == .on)
+        }
+      }
+      self.panel.setSourceCount(model.sources.count)
+      self.panel.window?.setContentSize(self.panel.frame.size)
+    }
     session.onStatus = { [weak self] text, output, enabled, stems in
       self?.applyStatus(text: text, output: output, enabled: enabled, stems: stems)
     }
@@ -190,6 +204,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     applyStatus(text: "E2E", output: "E2E", enabled: enabled, stems: true)
   }
   func e2eNotifyReadyForTest() { session.onReady?() }
+  func e2eApplyModelForTest(_ model: StemModel) { session.onModel?(model) }
   private func applyStatus(text: String, output: String, enabled: Bool, stems: Bool) {
     active = enabled
     panel.statusLabel.stringValue = text
@@ -290,7 +305,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   private func resetControls() {
     panel.pitchPicker.selectItem(withTag: 0)
     session.setTranspose(0)
-    controls = StemControls()
+    controls = StemControls(gains: Array(repeating: 1, count: runningModel?.sources.count ?? 4))
     for strip in panel.strips {
       strip.fader.floatValue = 1
       strip.mute.state = .off
@@ -347,8 +362,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     applyControls()
   }
   @objc private func check(_ sender: NSButton) {
-    let mask: UInt32 = 1 << UInt32(sender.tag % 4)
-    if sender.tag < 4 {
+    let mask: UInt32 = 1 << UInt32(sender.tag % 6)
+    if sender.tag < 6 {
       if sender.state == .on { controls.mute |= mask } else { controls.mute &= ~mask }
     } else {
       if sender.state == .on { controls.solo |= mask } else { controls.solo &= ~mask }
@@ -373,7 +388,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     applyControls()
   }
   @objc private func muteAll(_ sender: NSButton) {
-    controls.mute = sender.state == .on ? 0b1111 : 0
+    controls.mute = sender.state == .on ? ((1 << UInt32(controls.gains.count)) - 1) : 0
     for strip in panel.strips { strip.mute.state = sender.state }
     applyControls()
   }
@@ -383,7 +398,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     applyControls()
   }
   private func applyControls() {
-    panel.muteAllButton.state = controls.mute == 0b1111 ? .on : .off
+    panel.muteAllButton.state = controls.mute == ((1 << UInt32(controls.gains.count)) - 1) ? .on : .off
     panel.clearSoloButton.state = controls.solo != 0 ? .on : .off
     for (index, (strip, gain)) in zip(panel.strips, controls.effectiveGains).enumerated() {
       strip.show(silent: gain == 0, soloed: controls.solo & (1 << UInt32(index)) != 0)
@@ -448,7 +463,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     return menu
   }
   @objc private func showSpectrum() { spectrum.show() }
-  /// Automatic, Fine-tuned, Standard; in the Dock and status menus and behind the analyzer's gear.
+  /// All model choices, including optional six stems, in the Dock, status menu, and analyzer gear.
   func modelMenu() -> NSMenu {
     let models = NSMenu(title: "Model")
     for model in StemModel.allCases {

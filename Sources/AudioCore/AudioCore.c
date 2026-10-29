@@ -9,10 +9,11 @@ typedef struct { float *data; uint32_t capacity, channels; atomic_ullong read, w
 struct LSCore {
     Ring capture, output;
     atomic_int enabled, stems;
-    atomic_uint gains[4], mute, solo;
+    atomic_uint gains[6], mute, solo;
     atomic_ullong epoch, played, underruns, overflows;
-    float smooth[4], stem_blend;
+    float smooth[6], stem_blend;
     double rate, capture_rate;
+    uint8_t *output_counts;
     uint64_t *capture_times, *output_times, *output_frames;
     atomic_ullong rendered_frame, rendered_capture, rendered_host;
     atomic_uint rendered_weight;
@@ -25,8 +26,8 @@ struct LSCore {
     uint32_t fade_total, fade_done;
     float last_left, last_right, envelope;
     int priming, fade_out;
-    float meter_hold[4];
-    atomic_uint meter[4];
+    float meter_hold[6];
+    atomic_uint meter[6];
     // The mono mix as rendered, for the spectrum analyzer. Only the render thread writes.
     float scope[LS_SCOPE_FRAMES], scope_original[LS_SCOPE_FRAMES], original_now;
     atomic_ullong scope_write;
@@ -35,16 +36,17 @@ static void init_ring(Ring *r, uint32_t n, uint32_t ch) { r->capacity=n; r->chan
 LSCore *ls_create(double cr, double rr) {
     if(cr<8000 || cr>192000 || rr<8000 || rr>192000) return NULL;
     LSCore *c=calloc(1,sizeof(*c)); if(!c)return NULL;
-    init_ring(&c->capture,(uint32_t)(cr*24),2); init_ring(&c->output,(uint32_t)(rr*24),11); c->rate=rr; c->capture_rate=cr; c->capture_times=calloc((size_t)(cr*24),sizeof(uint64_t));
-    c->output_times=calloc(c->output.capacity,sizeof(uint64_t)); c->output_frames=calloc(c->output.capacity,sizeof(uint64_t)); atomic_store(&c->rendered_frame,UINT64_MAX); c->render_trace.source_frame=UINT64_MAX;
-    if(!c->output_times || !c->output_frames || !c->capture.data || !c->output.data || !c->capture_times) {ls_destroy(c);return NULL;}
-    float gains[4]={1,1,1,1}; ls_controls(c,gains,0,0); for(int s=0;s<4;s++)c->smooth[s]=1; atomic_store(&c->stems,1); c->stem_blend=1; c->priming=1; return c;
+    init_ring(&c->capture,(uint32_t)(cr*24),2); init_ring(&c->output,(uint32_t)(rr*24),15); c->rate=rr; c->capture_rate=cr; c->capture_times=calloc((size_t)(cr*24),sizeof(uint64_t));
+    c->output_counts=calloc(c->output.capacity,1); c->output_times=calloc(c->output.capacity,sizeof(uint64_t)); c->output_frames=calloc(c->output.capacity,sizeof(uint64_t)); atomic_store(&c->rendered_frame,UINT64_MAX); c->render_trace.source_frame=UINT64_MAX;
+    if(!c->output_counts || !c->output_times || !c->output_frames || !c->capture.data || !c->output.data || !c->capture_times) {ls_destroy(c);return NULL;}
+    float gains[6]={1,1,1,1,1,1}; ls_controls_counted(c,gains,6,0,0); for(int s=0;s<6;s++)c->smooth[s]=1; atomic_store(&c->stems,1); c->stem_blend=1; c->priming=1; return c;
 }
-void ls_destroy(LSCore *c) { if(c){free(c->capture.data);free(c->output.data);free(c->capture_times);free(c->output_times);free(c->output_frames);free(c);} }
+void ls_destroy(LSCore *c) { if(c){free(c->capture.data);free(c->output.data);free(c->capture_times);free(c->output_counts);free(c->output_times);free(c->output_frames);free(c);} }
 void ls_enable(LSCore *c,int enabled){atomic_store(&c->enabled,enabled);}
 void ls_stems(LSCore *c,int enabled){atomic_store(&c->stems,enabled!=0);}
 void ls_reset(LSCore *c){atomic_store(&c->enabled,0);atomic_fetch_add(&c->epoch,1);ls_discard_capture(c);atomic_store(&c->output.read,atomic_load(&c->output.write));atomic_store(&c->played,0);}
-void ls_controls(LSCore *c,const float *g,uint32_t mute,uint32_t solo){for(int s=0;s<4;s++){uint32_t bits;float v=fmaxf(0,fminf(1,g[s]));memcpy(&bits,&v,4);atomic_store(&c->gains[s],bits);}atomic_store(&c->mute,mute);atomic_store(&c->solo,solo);}
+int ls_controls_counted(LSCore *c,const float *g,uint32_t count,uint32_t mute,uint32_t solo){if(count!=4 && count!=6)return 0;for(uint32_t s=0;s<count;s++){uint32_t bits;float v=fmaxf(0,fminf(1,g[s]));memcpy(&bits,&v,4);atomic_store(&c->gains[s],bits);}atomic_store(&c->mute,mute&((1u<<count)-1));atomic_store(&c->solo,solo&((1u<<count)-1));return 1;}
+void ls_controls(LSCore *c,const float *g,uint32_t mute,uint32_t solo){ls_controls_counted(c,g,4,mute,solo);}
 // The consumer owns read. A producer flush requests a boundary, so a callback
 // already in flight cannot publish an old read index over a new one.
 void ls_flush_output_faded(LSCore *c,uint32_t fade_frames){atomic_store(&c->flush_fade,fade_frames);atomic_store(&c->flush,atomic_load(&c->output.write));atomic_fetch_add(&c->flush_sequence,1);}
@@ -72,13 +74,14 @@ static void publish_trace(LSCore *c){
 // Pre-fader stem peaks since the last take. Non-negative float bits sort like
 // unsigned integers, so a CAS max needs no lock on the render thread.
 static void publish_meters(LSCore *c){
-    for(int s=0;s<4;s++){
+    for(int s=0;s<6;s++){
         uint32_t bits;memcpy(&bits,&c->meter_hold[s],4);c->meter_hold[s]=0;
         uint32_t seen=atomic_load(&c->meter[s]);
         while(bits>seen && !atomic_compare_exchange_weak(&c->meter[s],&seen,bits)){}
     }
 }
-void ls_take_meters(LSCore *c,float *peaks){for(int s=0;s<4;s++){uint32_t bits=atomic_exchange(&c->meter[s],0);memcpy(&peaks[s],&bits,4);}}
+int ls_take_meters_counted(LSCore *c,float *peaks,uint32_t count){if(count!=4 && count!=6)return 0;for(uint32_t s=0;s<count;s++){uint32_t bits=atomic_exchange(&c->meter[s],0);memcpy(&peaks[s],&bits,4);}return 1;}
+void ls_take_meters(LSCore *c,float *peaks){ls_take_meters_counted(c,peaks,4);}
 int ls_render_snapshot(LSCore *c,LSRenderSnapshot *out){
     for(int attempt=0;attempt<4;attempt++){
         uint64_t before=atomic_load(&c->trace_sequence);if(before&1)continue;
@@ -91,7 +94,8 @@ uint64_t ls_rendered_capture_nanos(LSCore *c){return atomic_load(&c->rendered_ca
 uint64_t ls_rendered_host_nanos(LSCore *c){return atomic_load(&c->rendered_host);}
 float ls_rendered_stem_weight(LSCore *c){uint32_t bits=atomic_load(&c->rendered_weight);float value;memcpy(&value,&bits,4);return value;}
 uint32_t ls_output_write(LSCore *c,const float *data,uint32_t n){return ls_output_write_timed(c,data,n,UINT64_MAX,0);}
-uint32_t ls_output_write_timed(LSCore *c,const float *data,uint32_t n,uint64_t source_start,double capture_end_host_seconds){Ring *r=&c->output;uint64_t pos=atomic_load(&r->write),read=atomic_load(&r->read);if(n>r->capacity-(pos-read)){atomic_fetch_add(&c->overflows,1);return 0;}for(uint32_t i=0;i<n;i++){uint64_t slot=(pos+i)%r->capacity;memcpy(r->data+slot*11,data+i*11,44);c->output_frames[slot]=source_start==UINT64_MAX?UINT64_MAX:source_start+i;c->output_times[slot]=capture_end_host_seconds>0?(uint64_t)((capture_end_host_seconds-(double)(n-i)/c->rate)*1e9):0;}atomic_store(&r->write,pos+n);return n;}
+uint32_t ls_output_write_timed(LSCore *c,const float *data,uint32_t n,uint64_t source_start,double capture_end_host_seconds){return ls_output_write_timed_counted(c,data,n,4,source_start,capture_end_host_seconds);}
+uint32_t ls_output_write_timed_counted(LSCore *c,const float *data,uint32_t n,uint32_t count,uint64_t source_start,double capture_end_host_seconds){if(count!=4 && count!=6)return 0;Ring *r=&c->output;uint64_t epoch=atomic_load(&c->epoch),pos=atomic_load(&r->write),read=atomic_load(&r->read);if(pos<read || pos-read>r->capacity || n>r->capacity-(pos-read)){atomic_fetch_add(&c->overflows,1);return 0;}for(uint32_t i=0;i<n;i++){uint64_t slot=(pos+i)%r->capacity;float *dst=r->data+slot*15;const float *src=data+(size_t)i*(count*2+3);memset(dst,0,60);memcpy(dst,src,count*8);dst[12]=src[count*2];dst[13]=src[count*2+1];dst[14]=src[count*2+2];c->output_counts[slot]=(uint8_t)count;c->output_frames[slot]=source_start==UINT64_MAX?UINT64_MAX:source_start+i;c->output_times[slot]=capture_end_host_seconds>0?(uint64_t)((capture_end_host_seconds-(double)(n-i)/c->rate)*1e9):0;}if(epoch!=atomic_load(&c->epoch) || !atomic_compare_exchange_strong(&r->write,&pos,pos+n))return 0;return n;}
 static int next_frame(LSCore *c,float *left,float *right){
     *left=*right=0;c->original_now=0; if(!atomic_load(&c->enabled))return 0;
     uint64_t epoch=atomic_load(&c->epoch);
@@ -137,13 +141,14 @@ static int next_frame(LSCore *c,float *left,float *right){
         *left=c->last_left;*right=c->last_right;return 0;
     }
     c->priming=0;c->fade_out=0;c->envelope=fminf(1,c->envelope+(float)(1.0/(c->rate*.0025)));
-    float *f=r->data+(pos%r->capacity)*11;uint32_t mute=atomic_load(&c->mute),solo=atomic_load(&c->solo);
+    uint32_t count=c->output_counts[pos%r->capacity];float *f=r->data+(pos%r->capacity)*15;uint32_t mute=atomic_load(&c->mute),solo=atomic_load(&c->solo);
+    solo&=(1u<<count)-1;
     float blend_target=atomic_load(&c->stems)?1:0;
     c->stem_blend+=fmaxf(-(float)(1.0/(c->rate*.008)),fminf((float)(1.0/(c->rate*.008)),blend_target-c->stem_blend));
-    float weight=fmaxf(0,fminf(1,f[10]))*c->stem_blend;
+    float weight=fmaxf(0,fminf(1,f[14]))*c->stem_blend;
     c->render_trace.stem_weight=weight;
     float raw_left=0,raw_right=0;int uniform=1;
-    for(int s=0;s<4;s++){
+    for(int s=0;s<count;s++){
         uint32_t bits=atomic_load(&c->gains[s]);float target;memcpy(&target,&bits,4);
         if((mute&(1u<<s)) || (solo && !(solo&(1u<<s))))target=0;
         c->smooth[s]+=(target-c->smooth[s])*(float)(1.0/(c->rate*.008));
@@ -155,23 +160,23 @@ static int next_frame(LSCore *c,float *left,float *right){
     // Assign mixture residual to Other. Equal gains need no stems: the mix is
     // Original at that gain (neutral is Original, all-stem mute is silence),
     // so it also holds while the model rests and stem weight is zero.
-    *left+=(f[8]-raw_left)*c->smooth[3];*right+=(f[9]-raw_right)*c->smooth[3];
-    for(int s=0;s<4;s++){
-        float l=f[s*2],r=f[s*2+1];if(s==3){l+=f[8]-raw_left;r+=f[9]-raw_right;}
+    *left+=(f[12]-raw_left)*c->smooth[3];*right+=(f[13]-raw_right)*c->smooth[3];
+    for(int s=0;s<count;s++){
+        float l=f[s*2],r=f[s*2+1];if(s==3){l+=f[12]-raw_left;r+=f[13]-raw_right;}
         c->meter_hold[s]=fmaxf(c->meter_hold[s],fmaxf(fabsf(l),fabsf(r))*weight);
     }
     // Equal gains need no stems: the fallback below is then exact (Original at
     // that gain), and Original mode still ignores the controls.
     if(uniform)weight=0;
-    float ceiling=fmaxf(.98f,fmaxf(fabsf(f[8]),fabsf(f[9])));
+    float ceiling=fmaxf(.98f,fmaxf(fabsf(f[12]),fabsf(f[13])));
     float peak=fmaxf(fabsf(*left),fabsf(*right));if(peak>ceiling){float gain=ceiling/peak;*left*=gain;*right*=gain;}
     // Missing stems keep only the stem-free part of the mix: Original at
     // Other's gain. Original mode (stem_blend 0) still ignores the controls.
     float fallback=c->stem_blend*c->smooth[3]+(1-c->stem_blend);
-    *left=(*left*weight+f[8]*fallback*(1-weight))*c->envelope;
-    *right=(*right*weight+f[9]*fallback*(1-weight))*c->envelope;
+    *left=(*left*weight+f[12]*fallback*(1-weight))*c->envelope;
+    *right=(*right*weight+f[13]*fallback*(1-weight))*c->envelope;
     // Spotify's fade shape, measured with skip-probe: gain (1 - t/T)^4.
-    c->original_now=(f[8]+f[9])*.5f*c->envelope;
+    c->original_now=(f[12]+f[13])*.5f*c->envelope;
     if(c->fade_total){float t=1-(float)c->fade_done++/(float)c->fade_total,g=t*t*t*t;*left*=g;*right*=g;c->original_now*=g;}
     c->last_left=*left;c->last_right=*right;
     c->render_trace.source_frame=c->output_frames[pos%r->capacity];c->render_trace.capture_nanos=c->output_times[pos%r->capacity];

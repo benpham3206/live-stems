@@ -12,7 +12,7 @@ func text(_ value: String, _ x: CGFloat, _ y: CGFloat, _ size: CGFloat, _ weight
 let white = NSColor(calibratedWhite: 0.10, alpha: 1)
 let secondary = NSColor(calibratedWhite: 0.43, alpha: 1)
 text("Live Stems", 48, 379, 36, .semibold, white)
-text("Your music. Every part.", 50, 348, 17, .regular, secondary)
+text("Hear every layer.", 50, 348, 17, .regular, secondary)
 text("INSTALL", 51, 431, 10, .semibold, NSColor(calibratedRed: 0.16, green: 0.38, blue: 0.77, alpha: 1))
 // A restrained waveform ties the window to audio without competing with icons.
 let wave = NSBezierPath()

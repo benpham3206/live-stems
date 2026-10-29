@@ -19,6 +19,7 @@ struct AudioWindow {
 struct StemWindow {
   var range: FrameRange
   var samples: [Float]
+  var sourceCount: Int = 4
 }
 struct PlaybackSnapshot {
   var trackID: String
@@ -50,9 +51,11 @@ struct AudioSource: Equatable {
 }
 /// The separation network. Automatic starts fine-tuned and drops to Standard on GPUs too slow for it.
 enum StemModel: String, CaseIterable {
-  case automatic = "auto", fineTuned = "htdemucs_ft", standard = "htdemucs"
+  case automatic = "auto", fineTuned = "htdemucs_ft", standard = "htdemucs", sixSource = "htdemucs_6s"
+  var sources: [String] { ["vocals", "drums", "bass", "other"] + (self == .sixSource ? ["guitar", "piano"] : []) }
   var title: String {
     switch self {
+    case .sixSource: "Six stems (experimental)"
     case .automatic: "Automatic"
     case .fineTuned: "Fine-tuned (htdemucs_ft) · cleaner"
     case .standard: "Standard (htdemucs) · lighter"
@@ -74,9 +77,16 @@ struct StemControls {
   var gains: [Float] = [1, 1, 1, 1]
   var mute: UInt32 = 0
   var solo: UInt32 = 0
+  mutating func resize(to count: Int) {
+    precondition(count == 4 || count == 6)
+    gains = Array(gains.prefix(count)) + Array(repeating: 1, count: max(0, count - gains.count))
+    let mask = (UInt32(1) << UInt32(count)) - 1
+    mute &= mask
+    solo &= mask
+  }
   /// Stem gains after mute and solo.
   var effectiveGains: [Float] {
-    (0..<4).map { s in
+    gains.indices.map { s in
       let bit: UInt32 = 1 << UInt32(s)
       return mute & bit != 0 || (solo != 0 && solo & bit == 0) ? 0 : gains[s]
     }
@@ -108,7 +118,8 @@ enum LocalSettings {
   }
   static var source: URL {
     if bundledRuntime != nil { return Bundle.main.resourceURL! }
-    return values["source"].map { URL(fileURLWithPath: $0) } ?? root.appendingPathComponent("outputs/live-stems-source")
+    return values["source"].map { URL(fileURLWithPath: $0) }
+      ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
   }
   static var python: URL { bundledRuntime?.appendingPathComponent("bin/python3.12") ?? root.appendingPathComponent("work/stems-venv/bin/python") }
   static var cache: URL {

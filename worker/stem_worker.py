@@ -1,4 +1,4 @@
-"""Persistent local four-stem worker. Stdout contains only framed audio packets."""
+"""Persistent local four- or six-stem worker. Stdout contains only framed audio packets."""
 import argparse
 import json
 from pathlib import Path
@@ -13,6 +13,14 @@ from logging.handlers import RotatingFileHandler
 
 HEADER=struct.Struct('<4sHHQQQIIHHI')
 SOURCES=['vocals','drums','bass','other']
+SIX_SOURCES=SOURCES+['guitar','piano']
+
+def canonical_sources(model_sources):
+    sources=list(model_sources)
+    expected=SIX_SOURCES if len(sources)==6 else SOURCES
+    if len(sources)!=len(expected) or set(sources)!=set(expected):
+        raise ValueError('Unexpected model source count or names')
+    return expected.copy()
 # The app hop is 100 ms; GPU contention needs the rest of that budget, so 60 ms is the cut-off.
 SLOW_SECONDS=0.060
 
@@ -41,7 +49,7 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--cache',type=Path,required=True)
     parser.add_argument('--trace-dir',type=Path)
-    parser.add_argument('--model',choices=['auto','htdemucs_ft','htdemucs'],default='auto')
+    parser.add_argument('--model',choices=['auto','htdemucs_ft','htdemucs','htdemucs_6s'],default='auto')
     args=parser.parse_args()
     trace=logging.getLogger('stems.worker.timing')
     trace.setLevel(logging.INFO)
@@ -54,7 +62,7 @@ def main():
     # Only require the files the choice can use. auto starts with htdemucs_ft and may fall back to htdemucs.
     # A light install has only htdemucs; auto then uses it.
     if args.model=='auto' and not has_model('htdemucs_ft') and has_model('htdemucs'):args.model='htdemucs'
-    if not has_model('htdemucs' if args.model=='htdemucs' else 'htdemucs_ft'):raise FileNotFoundError('Missing local model cache')
+    if not has_model('htdemucs_ft' if args.model=='auto' else args.model):raise FileNotFoundError('Missing local model cache')
     import mlx.core as mx
     import numpy as np
     from demucs_mlx.mlx_convert import load_mlx_model_from_safetensors
@@ -62,7 +70,9 @@ def main():
     from demucs_mlx.apply_mlx import apply_model
     def load(name):
         model=load_mlx_model_from_safetensors(name,cache_dir=str(args.cache))
-        if set(model.sources)!=set(SOURCES) or model.samplerate!=44100:raise ValueError('Unexpected model format')
+        sources=canonical_sources(model.sources)
+        if model.samplerate!=44100 or len(sources)!=(6 if name=='htdemucs_6s' else 4):
+            raise ValueError('Unexpected model format')
         for item in getattr(model,'models',[model]):
             item.eval();item.use_train_segment=False
             set_attention_dtype(item,mx.float32);mx.eval(item.parameters())
@@ -74,7 +84,9 @@ def main():
     state={}
     def use(name):
         # Load first. Assigning the new model drops the old reference.
-        state.update(name=name,single=name=='htdemucs',model=load(name))
+        model=load(name)
+        state.update(name=name,single=name!='htdemucs_ft',model=model,
+                     sources=canonical_sources(model.sources))
     def separate(samples):
         started=time.monotonic()
         model=state['model']
@@ -83,7 +95,7 @@ def main():
         normalized=((mixture-mean)/std)[None]
         if state['single']:
             estimates=apply_model(model,normalized,shifts=0,split=False,batch_size=1)[0]
-            stems=mx.stack([estimates[model.sources.index(name)] for name in SOURCES])
+            stems=mx.stack([estimates[model.sources.index(name)] for name in state['sources']])
         else:
             # One network per source. other is the remainder, so its network never runs.
             parts=[apply_model(model,normalized,shifts=0,split=False,batch_size=1,
@@ -92,7 +104,7 @@ def main():
         output=stems*std+mean
         mx.eval(output)
         evaluated=time.monotonic()
-        data=np.asarray(output).transpose(2,0,1).reshape(44100,8)
+        data=np.asarray(output).transpose(2,0,1).reshape(44100,len(state['sources'])*2)
         if not np.isfinite(data).all():raise ValueError('Non-finite estimates')
         data=np.ascontiguousarray(data,dtype='<f4')
         return data,{'model':state['name'],
@@ -105,7 +117,7 @@ def main():
     # Production requests use exactly this shape, including after a skip.
     warm=np.sin(np.arange(44100,dtype=np.float32)*.017)
     warm=np.stack([warm,warm*.8],axis=1)
-    use('htdemucs' if args.model=='htdemucs' else 'htdemucs_ft')
+    use('htdemucs_ft' if args.model=='auto' else args.model)
     began=time.monotonic()
     for _ in range(3):separate(warm)
     median=None
@@ -114,7 +126,7 @@ def main():
         if median>SLOW_SECONDS and has_model('htdemucs'):
             use('htdemucs');mx.clear_cache()
             for _ in range(3):separate(warm)
-    send(1,json.dumps({'sources':SOURCES,'samplerate':44100,'window_frames':44100,
+    send(1,json.dumps({'sources':state['sources'],'samplerate':44100,'window_frames':44100,
                        'model':state['name'],'median_compute_seconds':median,
                        'warmup_seconds':time.monotonic()-began}).encode())
     idle_cleared=False
@@ -136,7 +148,7 @@ def main():
         if not np.isfinite(samples).all():raise ValueError('Non-finite input')
         data,metrics=separate(samples)
         sent=time.monotonic()
-        send(3,data.tobytes(),(generation,job,start),frames,4)
+        send(3,data.tobytes(),(generation,job,start),frames,len(state['sources']))
         if args.trace_dir:
             trace.info(json.dumps(dict(metrics,event='job',uptime=time.monotonic(),
                                       pid=os.getpid(),

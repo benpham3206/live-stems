@@ -1,8 +1,8 @@
 # Drag-to-Applications package
 
-![The Finder install window](preview.png)
+![Installer background; Finder supplies the app and Applications icons](preview.png)
 
-The DMG holds a self-contained Apple Silicon app, an Applications shortcut, and a hidden corresponding-source archive. Python, inference packages, both verified models, and the worker travel inside the app. No runtime package download, Homebrew, compiler, or Terminal command is needed by the listener.
+The DMG holds a self-contained Apple Silicon app, an Applications shortcut, and a hidden corresponding-source archive. Python, inference packages, two default verified models (or all three with `--six-stems`), and the worker travel inside the app. No runtime package download, Homebrew, compiler, or Terminal command is needed by the listener.
 
 The normal window contains two icons and one instruction. The background is drawn by `dmg-background.swift`; Finder supplies the actual app and Applications icons. `layout.applescript` fixes their positions. Open-source licences remain in the app. The source archive can also be opened with Finder's Show Hidden Files shortcut.
 
@@ -44,7 +44,7 @@ Check the real app after packaging or relocation:
 python3 script/check_bundle.py "/path/to/Live Stems.app"
 ```
 
-This loads both models, sends a synthetic stereo tone through each worker, checks finite nonzero four-stem output, shuts the workers down, checks that no model stamps were written, and verifies the app signature again. It uses the GPU but does not launch the app or capture audio.
+This loads every bundled model, sends a synthetic stereo tone through each worker, checks finite nonzero output with the declared four or six sources, shuts the workers down, checks that no model stamps were written, and verifies the app signature again. It uses the GPU but does not launch the app or capture audio.
 
 ## Public distribution
 
@@ -55,3 +55,5 @@ Before publication, validate model startup and separation from a relocated, read
 ## Licence
 
 Live Stems is GPL-2.0-or-later. Python and inference libraries retain their own licences in the bundle. Meta's Demucs models are under MIT; `DEMUCS-LICENSE` accompanies them. The local source archive includes the app, build scripts, and app source needed to build the app; the runtime lock and build procedure identify the separate Python dependencies.
+
+Use `--six-stems` to include the optional verified `htdemucs_6s` cache alongside the two default models. The cache must contain its safetensors and config files. Without this option, packaging retains the four-source default.

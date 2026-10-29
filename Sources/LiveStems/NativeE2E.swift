@@ -119,6 +119,23 @@ enum NativeE2E {
     let out = URL(fileURLWithPath: args[outputIndex + 1])
     try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
     switch stage {
+    case "six-source":
+      try SixSourceE2E.run(out)
+    case "six-worker":
+      let worker = WorkerClient(model: .sixSource)
+      defer { worker.stop() }
+      try waitStart(worker)
+      guard worker.runningModel == .sixSource else { throw StemError("Six model was not loaded") }
+      let source = try song()
+      let window = AudioWindow(range: FrameRange(generation: 1, start: 0, count: 44100),
+        samples: samples(source, start: 60 * 44100, count: 44100))
+      let result = try separate(worker, window, 1)
+      guard result.sourceCount == 6, result.samples.count == 44100 * 12,
+        result.samples.allSatisfy(\.isFinite), result.samples.contains(where: { abs($0) > 1e-7 })
+      else { throw StemError("Six worker output invalid") }
+      try Data("PASS actual Swift WorkerClient six-model offline fixture execution\n".utf8)
+        .write(to: out.appendingPathComponent("six-worker.txt"))
+      print("PASS six-worker")
     case "trace":
       try TraceE2E.run(out)
     case "menu":

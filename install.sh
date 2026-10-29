@@ -18,11 +18,12 @@ MODEL=$ROOT/work/model-cache
 IDENTITY=$ROOT/work/live-stems-signing-identity.txt
 CERT="Live Stems Local"
 MODELS_URL=https://github.com/benpham3206/live-stems/releases/download/models-v1
-DRY=0 LIGHT=0
+DRY=0 LIGHT=0 SIX=0
 for arg in "$@"; do
   case $arg in
     --dry-run) DRY=1 ;;
     --light) LIGHT=1 ;;
+    --six-stems) SIX=1 ;;
     *) print "error: unknown option $arg" >&2; exit 2 ;;
   esac
 done
@@ -108,3 +109,9 @@ fi
 say "Building Live Stems and installing it in /Applications"
 run bash "$SOURCE/script/build_and_run.sh"
 say "Done. Click Stems in the menu bar, pick an app in the source menu, and press M or S."
+
+# Optional source conversion uses upstream Demucs weights, not an invented release asset.
+if (( SIX )); then
+  run "$VENV/bin/python" -m pip install torch demucs
+  run "$VENV/bin/python" -m demucs_mlx.mlx_convert htdemucs_6s --output-dir "$MODEL"
+fi

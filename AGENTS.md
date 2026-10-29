@@ -15,3 +15,5 @@ Native macOS live audio capture, stem separation, and practice controls.
 
 - `script/package_release.py` builds a self-contained drag-install DMG without installing or launching the app. Runtime wheels are hash-pinned for macOS 14; audit every embedded Mach-O before claiming 14.2 support. See [packaging](packaging/README.md).
 - Packaged Python and models live in bundle Resources. Run the worker with `-I -B`; keep the model directory read-only to prevent digest stamps from changing the signed bundle.
+
+- Six-source models use canonical vocals/drums/bass/other/guitar/piano order. Counted native APIs accept 4 or 6; external frames contain stereo stems, stereo Original, then weight. Preserve active controls across same-model attachment and clear inactive controls on model changes. See [six-stem checks](docs/six-stems.md).

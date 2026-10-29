@@ -100,8 +100,12 @@ final class SessionController {
     do {
       self.busy = false
       let running = worker.runningModel
+      controls.resize(to: running.sources.count)
+      if self.pipeline?.sourceCount != running.sources.count { self.pipeline?.resetProcessor() }
+      self.pipeline?.sourceCount = running.sources.count
       DispatchQueue.main.async { self.onModel?(running) }
       if let audio = self.audio {
+        applyControls()
         self.pipeline?.coolWorker()
         ls_stems(audio.core, self.stemsSelected ? 1 : 0)
         self.status(self.pipeline.map(self.mixStatus) ?? "Original mix")
@@ -110,6 +114,7 @@ final class SessionController {
       let audio = try AudioSession(source: self.source)
       self.audio = audio
       let pipeline = StemPipeline(core: audio.core!)
+      pipeline.sourceCount = running.sources.count
       pipeline.onFailure = { [weak self = self] message in self?.end(message) }
       pipeline.onTrace = { [weak self = self] value in self?.trace.record(value) }
       self.pipeline = pipeline
@@ -327,7 +332,7 @@ final class SessionController {
     audio?.setTranspose(transpose)
     if let core = audio?.core {
       controls.gains.withUnsafeBufferPointer {
-        ls_controls(core, $0.baseAddress, controls.mute, controls.solo)
+        ls_controls_counted(core, $0.baseAddress, UInt32(controls.gains.count), controls.mute, controls.solo)
       }
     }
     // Equal effective gains render Original at that gain, so stems are not needed.
@@ -335,7 +340,9 @@ final class SessionController {
   }
   func setControls(_ value: StemControls) {
     queue.async {
+      let count = self.pipeline?.sourceCount ?? self.loadedWorker?.runningModel.sources.count ?? 4
       self.controls = value
+      self.controls.resize(to: count)
       self.trace.record(TraceRecord(event: "controls", generation: self.pipeline?.generation ?? self.token,
         sourceFrame: self.pipeline?.outputPosition, muteMask: value.mute, soloMask: value.solo, gains: value.gains))
       self.applyControls()
@@ -392,8 +399,8 @@ final class SessionController {
   /// Pre-fader stem peaks since the last call; zeros when no session runs.
   func takeMeters(_ done: @escaping ([Float]) -> Void) {
     queue.async {
-      var peaks: [Float] = [0, 0, 0, 0]
-      if let core = self.audio?.core { ls_take_meters(core, &peaks) }
+      var peaks = [Float](repeating: 0, count: self.controls.gains.count)
+      if let core = self.audio?.core { _ = ls_take_meters_counted(core, &peaks, UInt32(peaks.count)) }
       DispatchQueue.main.async { done(peaks) }
     }
   }

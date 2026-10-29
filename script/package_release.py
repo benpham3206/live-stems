@@ -53,6 +53,7 @@ def main():
     parser.add_argument('--python',required=True,type=Path,help='Relocatable CPython 3.12 prefix, such as uv python dir')
     parser.add_argument('--wheels',required=True,type=Path,help='Wheels matching packaging/runtime-lock.json')
     parser.add_argument('--models',required=True,type=Path)
+    parser.add_argument('--six-stems',action='store_true',help='Include verified optional htdemucs_6s cache')
     parser.add_argument('--identity',default='-',help='Code-signing identity; default ad hoc for local preview')
     parser.add_argument('--binary',type=Path,help='Existing release binary; default builds the package')
     parser.add_argument('--skip-dmg',action='store_true',help='Build app only')
@@ -92,7 +93,7 @@ def main():
     run(args.python/'bin/python3.12','-m','pip','install','--no-deps','--no-index','--no-compile','--target',site,*wheels)
     models=resources/'Models'
     models.mkdir()
-    for name in ['htdemucs','htdemucs_ft']:
+    for name in ['htdemucs','htdemucs_ft'] + (['htdemucs_6s'] if args.six_stems else []):
         config=args.models/(name+'_config.json')
         weights=args.models/(name+'.safetensors')
         expected=json.loads(config.read_text())['safetensors_sha256']
