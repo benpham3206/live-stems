@@ -1,8 +1,8 @@
 import AppKit
 import OSLog
 
-/// The app has no menu bar to carry Cmd+W (close), Cmd+Q (quit), Cmd+1-4
-/// (cycle a stem) and Cmd+5 (cycle the spectrum), so the panel handles them itself.
+/// The app has no menu bar to carry Cmd+W (close), Cmd+Q (quit), Cmd+1-6
+/// (cycle a stem) and Cmd+` (cycle the spectrum), so the panel handles them itself.
 final class PanelWindow: NSWindow {
   var quit: () -> Void = {}
   var cycleStem: (Int) -> Void = { _ in }
@@ -25,8 +25,8 @@ final class PanelWindow: NSWindow {
     switch event.charactersIgnoringModifiers {
     case "w": windowToClose.performClose(nil)
     case "q": quit()
-    case "1", "2", "3", "4": cycleStem(Int(event.charactersIgnoringModifiers!)! - 1)
-    case "5": cycleSpectrum()
+    case "1", "2", "3", "4", "5", "6": cycleStem(Int(event.charactersIgnoringModifiers!)! - 1)
+    case "`": cycleSpectrum()
     default: return super.performKeyEquivalent(with: event)
     }
     return true
@@ -127,6 +127,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
       blur.addSubview(panel)
       window.contentView = blur
     }
+    panel.modelPicker.menu = modelMenu()
+    panel.modelPicker.menu?.insertItem(withTitle: "Model", action: nil, keyEquivalent: "", at: 0)
     // Any open app can be the source; the list refreshes each time it opens.
     sourcePicker.menu?.delegate = self
     sourcePicker.target = self
@@ -375,8 +377,9 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     }
     applyControls()
   }
-  /// Cmd+1-4: default, then muted, then soloed, then default again.
+  /// Cmd+1-6: default, then muted, then soloed, then default again.
   private func cycleStem(_ index: Int) {
+    guard index < controls.gains.count else { return }
     let strip = panel.strips[index], mask: UInt32 = 1 << UInt32(index)
     if strip.mute.state == .on {
       strip.mute.state = .off

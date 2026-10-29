@@ -238,7 +238,7 @@ and switching headphones or speakers keeps Live Stems running.
   the same volume (untouched, all muted, or all at the same level), or when the music is paused. The
   status line tells you which: *Live stems*, *Original · model asleep*, *Muted · model asleep*.
 - **Reset** returns every control to normal and brings the stem splitter back if it stopped.
-- **Spectrum Analyzer** (the bars button): shows the sound Live Stems plays, as you hear it. Mute,
+- **Spectrum Analyzer** (the Spectrum button): shows the sound Live Stems plays, as you hear it. Mute,
   solo or move a fader and the spectrum changes with the sound. It waits for your output's delay,
   so it stays in time on AirPods too. **3D** is a rolling waterfall with the newest moment in front;
   **2D** is laid out like MiniMeters: coloured bars for what you hear, a white outline for the original
@@ -246,12 +246,13 @@ and switching headphones or speakers keeps Live Stems running.
   or linear frequency and a 2, 5 or 10 second span; dB or linear height applies to 3D only. In 3D, right-drag
   to turn the view to any angle, scroll up to zoom in, left-drag to move the window, double-click to reset. It freezes when the
   music is silent. The gear holds the model choice.
-- **Choose the model**: right-click **Stems** in the menu bar (or the Dock icon) and open **Model**.
+- **Choose the model**: use **Model** beside Quit, or right-click **Stems** in the menu bar (or the Dock icon) and open **Model**.
   *Automatic* uses the fine-tuned model and switches to the standard one if your GPU is too slow for it.
   *Fine-tuned* is cleaner; *Standard* is lighter. The music keeps playing while the model reloads.
 - **Change the source** at any time in the source menu; Live Stems restarts on the new app.
 - **Follow What's Playing** (right-click the menu bar icon, or the Dock icon; on by default) switches the source to the app that starts playing. If two apps play, the newer one wins. An open but silent audio stream does not qualify. Changing focus does not select a source. Select a source manually to override follow.
-- **⌘5** cycles the Spectrum Analyzer: off, 3D, 2D, off.
+- **⌘1–6** cycle each active stem through on, mute, solo, on. Guitar and Piano shortcuts do nothing with a four-stem model.
+- **⌘`** cycles the Spectrum Analyzer: off, 3D, 2D, off.
 - **⌘W** closes the window in front. If no window is in front, the Spectrum Analyzer closes before the panel.
 - **Quit Live Stems** resets the mix and hands the sound back to the app at the next pause or quiet
   moment, so your music never cuts out.

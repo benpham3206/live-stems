@@ -61,7 +61,7 @@ at the steady hop (results discarded) so the first real jobs are not cold.
 Each result keeps its 50 ms right-context tail as a provisional estimate. A
 partly late result commits its uncommitted suffix, and missing frames use the
 tail instead of Original. The next result replaces provisional frames with a
-short crossfade. Jobs also start on result arrival, not only on the 10 ms tick.
+short crossfade. Each estimate handoff blends once, starting at the uncommitted tail; partly late results preserve audio already queued. Jobs also start on result arrival, not only on the 10 ms tick.
 The cut also rejects samples with hardware timestamps before the notification
 boundary. A callback that starts after a cut can still contain an older block.
 Only the fresh suffix of a crossing block enters the converter.

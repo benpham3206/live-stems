@@ -294,6 +294,31 @@ enum MenuE2E {
     checks.append(["name": "cmd_1_to_4_cycle_stems"])
     controller.e2eApplyModelForTest(.sixSource)
     let sixFaders = descendants(of: window.contentView!).compactMap { $0 as? NSSlider }
+    for (key, name) in [("5", "Guitar"), ("6", "Piano")] {
+      let mute = try control(named: "\(name) Mute", in: window)
+      let solo = try control(named: "\(name) Solo", in: window)
+      var seen = [String]()
+      for _ in 0..<3 {
+        try require(window.performKeyEquivalent(with: command(key)), "Cmd+\(key) was not handled")
+        seen.append("\(mute.state == .on ? "M" : "-")\(solo.state == .on ? "S" : "-")")
+      }
+      try require(seen == ["M-", "-S", "--"], "Cmd+\(key) failed stem cycle: \(seen)")
+    }
+    let panel = descendants(of: window.contentView!).compactMap { $0 as? ControlsPanel }.first!
+    try require(panel.spectrumButton.title == "Spectrum", "Spectrum button lost its visible label")
+    try require(panel.modelPicker.menu?.items.dropFirst().count == StemModel.allCases.count,
+      "Footer model menu omitted model choices")
+    for count in [4, 6] {
+      panel.setSourceCount(count)
+      let right = panel.frame.width - 14
+      try require(panel.resetButton.frame.maxX == right && panel.allRow.frame.maxX == right
+        && panel.forward.frame.maxX == right && panel.pitchReset.frame.maxX == right
+        && panel.modelPicker.frame.maxX == right, "\(count)-stem rows lost their shared right edge")
+      try require(panel.quitButton.frame.maxX + 8 == panel.modelPicker.frame.minX,
+        "\(count)-stem footer left a gap")
+    }
+    checks.append(["name": "six_stem_shortcuts_and_responsive_layout"])
+
     try require(window.contentView!.frame.width == 528, "Six-source panel did not widen")
     if let screen = window.screen {
       try require(screen.visibleFrame.contains(window.frame), "Six-source resize clipped the panel beyond the screen")
@@ -322,28 +347,34 @@ enum MenuE2E {
     controller.e2eApplyModelForTest(.sixSource)
     try require(sixFaders[4].floatValue == 1 && sixFaders[5].floatValue == 1, "Reactivated strips retained stale faders")
     controller.e2eApplyModelForTest(.standard)
+    let fourControls = controller.e2eControls
+    _ = window.performKeyEquivalent(with: command("5"))
+    _ = window.performKeyEquivalent(with: command("6"))
+    try require(controller.e2eControls.gains == fourControls.gains
+      && controller.e2eControls.mute == fourControls.mute && controller.e2eControls.solo == fourControls.solo,
+      "Inactive Guitar/Piano shortcuts changed four-source controls")
     checks.append(["name": "six_source_actions_and_model_return"])
-    // Cmd+5 steps the spectrum through closed, 3D, 2D, closed.
+    // Cmd+` steps the spectrum through closed, 3D, 2D, closed.
     var views = [String]()
     for _ in 0..<4 {
-      try require(window.performKeyEquivalent(with: command("5")), "Cmd+5 was not handled")
+      try require(window.performKeyEquivalent(with: command("`")), "Cmd+` was not handled")
       pump()
       let spectrum = NSApp.windows.first { $0.title == "Spectrum Analyzer" }
       let view = spectrum.flatMap { descendants(of: $0.contentView!).compactMap { $0 as? SpectrumView }.first }
       views.append(spectrum?.isVisible != true ? "off" : view?.threeD == true ? "3D" : "2D")
     }
-    try require(views == ["3D", "2D", "off", "3D"], "Cmd+5 cycled the spectrum as \(views)")
+    try require(views == ["3D", "2D", "off", "3D"], "Cmd+` cycled the spectrum as \(views)")
     // From the spectrum window itself, with the panel closed.
     window.performClose(nil)
     let spectrum = NSApp.windows.first { $0.title == "Spectrum Analyzer" }!
-    try require(spectrum.performKeyEquivalent(with: command("5")) && spectrum.isVisible, "Cmd+5 in the spectrum window did not go to 2D")
-    try require(spectrum.performKeyEquivalent(with: command("5")), "Cmd+5 in the spectrum window was not handled")
+    try require(spectrum.performKeyEquivalent(with: command("`")) && spectrum.isVisible, "Cmd+` in the spectrum window did not go to 2D")
+    try require(spectrum.performKeyEquivalent(with: command("`")), "Cmd+` in the spectrum window was not handled")
     pump()
-    try require(!spectrum.isVisible, "Cmd+5 in the spectrum window did not close it after 2D")
+    try require(!spectrum.isVisible, "Cmd+` in the spectrum window did not close it after 2D")
     controller.appActivated()
     pump()
     NSApp.windows.first { $0.title == "Spectrum Analyzer" }?.close()
-    checks.append(["name": "cmd_5_cycles_spectrum"])
+    checks.append(["name": "cmd_backtick_cycles_spectrum"])
     // Switching to another app hides the panel; the toggle keeps it up.
     Visibility.reset()
     defer { Visibility.reset() }
@@ -395,10 +426,14 @@ enum MenuE2E {
       throw StemError("Snapshot has no panel")
     }
     let vocalsMute = try control(named: "Vocals Mute", in: window), bassSolo = try control(named: "Bass Solo", in: window)
-    for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua), ("states", .darkAqua)] {
+    for (name, look) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua), ("states", .darkAqua), ("six", .darkAqua)] {
       if name == "states" {  // Vocals muted, Bass soloed: the others fade
         vocalsMute.performClick(nil)
         bassSolo.performClick(nil)
+      }
+      if name == "six" {
+        descendants(of: view).compactMap { $0 as? NSButton }.first { $0.title == "Reset" }?.performClick(nil)
+        controller.e2eApplyModelForTest(.sixSource)
       }
       window.appearance = NSAppearance(named: look)
       view.layoutSubtreeIfNeeded()
@@ -417,7 +452,7 @@ enum MenuE2E {
       try NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
         .write(to: out.appendingPathComponent("panel-\(name).png"))
     }
-    print("PASS snapshot · panel-light.png, panel-dark.png, panel-states.png")
+    print("PASS snapshot · panel-light.png, panel-dark.png, panel-states.png, panel-six.png")
   }
 
   /// 3000 random clicks on every panel control. After each one the buttons must

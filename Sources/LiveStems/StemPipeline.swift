@@ -285,8 +285,9 @@ final class StemPipeline {
         sourceEnd: job.core.upperBound, windowStart: result.range.start, lateFrames: coreLo - job.core.lowerBound))
     }
     var coreSamples = Array(result.samples[(coreLo - job.window.lowerBound) * channels..<((job.core.upperBound - job.window.lowerBound) * channels)])
-    // The next estimate overlaps the previous right-context tail. Blend the
-    // uncommitted overlap instead of stepping between two estimates.
+    // Blend once, from the old right-context tail into the new estimate.
+    // Start at the commit frontier if partly late; committed frames stay old.
+    // Blending the preceding ready chunk too would restart at old here.
     if let tail = provisional, tail.range.upperBound > coreLo, tail.range.lowerBound < job.core.upperBound {
       let overlap = max(tail.range.lowerBound, coreLo)..<min(tail.range.upperBound, job.core.upperBound)
       for frame in overlap.lowerBound..<min(overlap.upperBound, overlap.lowerBound + fade) {
@@ -295,22 +296,6 @@ final class StemPipeline {
           coreSamples[(frame - coreLo) * channels + channel] =
             tail.samples[(frame - tail.range.lowerBound) * channels + channel] * (1 - amount)
             + coreSamples[(frame - coreLo) * channels + channel] * amount
-        }
-      }
-    }
-    // Join two estimates of the same source frames. Touch only frames that
-    // have not entered the output queue; never replace already played audio.
-    if outputPosition < job.core.lowerBound,
-      let last = ready.indices.last, ready[last].range.upperBound == job.core.lowerBound
-    {
-      let overlapStart = job.core.lowerBound - fade
-      for frame in max(outputPosition, overlapStart)..<job.core.lowerBound {
-        let amount = Float(frame - overlapStart + 1) / Float(fade + 1)
-        let previous = (frame - ready[last].range.lowerBound) * channels
-        let incoming = (frame - job.window.lowerBound) * channels
-        for channel in 0..<channels {
-          ready[last].samples[previous + channel] = ready[last].samples[previous + channel] * (1 - amount)
-            + result.samples[incoming + channel] * amount
         }
       }
     }

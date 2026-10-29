@@ -11,7 +11,7 @@ The output frame contains stereo stems, stereo Original, and blend weight.
 The native counted APIs receive the loaded source count. Model changes clear
 processor caches before interpreting a new stride. Four-stem controls mask
 inactive mute and solo bits. When the loaded model changes the panel width,
-the panel returns inside the screen. Same-model attachment keeps its position. Cmd+1–4 retain their cycles; Cmd+5 opens spectrum.
+the panel returns inside the screen. Same-model attachment keeps its position. Cmd+1–6 cycle active stems; Cmd+` cycles spectrum.
 
 Six-stem separation is experimental. Piano separation can be weaker.
 No new pitch engine is used.
