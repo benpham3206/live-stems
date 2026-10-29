@@ -295,6 +295,9 @@ enum MenuE2E {
     controller.e2eApplyModelForTest(.sixSource)
     let sixFaders = descendants(of: window.contentView!).compactMap { $0 as? NSSlider }
     try require(window.contentView!.frame.width == 528, "Six-source panel did not widen")
+    if let screen = window.screen {
+      try require(screen.visibleFrame.contains(window.frame), "Six-source resize clipped the panel beyond the screen")
+    }
     for (index, name) in [(4, "Guitar"), (5, "Piano")] {
       let mute = try control(named: "\(name) Mute", in: window)
       let solo = try control(named: "\(name) Solo", in: window)
@@ -306,7 +309,10 @@ enum MenuE2E {
       try require(controller.e2eControls.gains[index] == 0.4 && controller.e2eControls.mute & (1 << UInt32(index)) != 0
         && controller.e2eControls.solo & (1 << UInt32(index)) != 0, "\(name) actions did not reach controls")
     }
+    window.setFrameOrigin(NSPoint(x: window.frame.minX - 20, y: window.frame.minY - 10))
+    let placedFrame = window.frame
     controller.e2eApplyModelForTest(.sixSource)
+    try require(window.frame == placedFrame, "Same-model attachment moved the panel")
     try require(controller.e2eControls.gains[4] == 0.4 && controller.e2eControls.gains[5] == 0.4
       && controller.e2eControls.mute == 48 && controller.e2eControls.solo == 48, "Same model reset six-source controls")
     controller.e2eApplyModelForTest(.standard)

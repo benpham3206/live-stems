@@ -171,8 +171,10 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
           strip.show(silent: self.controls.effectiveGains[index] == 0, soloed: strip.solo.state == .on)
         }
       }
+      let previousWidth = self.window.frame.width
       self.panel.setSourceCount(model.sources.count)
       self.panel.window?.setContentSize(self.panel.frame.size)
+      if self.window.frame.width != previousWidth { self.positionWindow() }
     }
     session.onStatus = { [weak self] text, output, enabled, stems in
       self?.applyStatus(text: text, output: output, enabled: enabled, stems: stems)
