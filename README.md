@@ -309,3 +309,5 @@ A self-contained disk-image build is available for development and release prepa
 ## Licence
 
 Live Stems is licensed under GPL-2.0-or-later. See [LICENSE](LICENSE). Rubber Band and the other bundled components retain their own notices; see [packaging licences](packaging/README.md#licence).
+
+When Live Stems is focused, **⌘← / ⌘→** select the previous/next Spotify track. **⌘⇧← / ⌘⇧→** keep seeking by the chosen interval. Track navigation does not repeat when a key is held. Other sources do not receive Spotify commands.

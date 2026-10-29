@@ -349,6 +349,14 @@ final class SessionController {
     }
   }
   var e2eNeedsOutput: Bool { queue.sync { mixChangesSource } }
+  func changeTrack(forward: Bool) {
+    queue.async {
+      guard self.source.isSpotify, self.quitCompletion == nil else { return }
+      self.stateSource.changeTrack(forward: forward) { error in
+        if let error { self.queue.async { self.status(error.localizedDescription) } }
+      }
+    }
+  }
   func seek(by offset: Int, completion: @escaping (Result<PlaybackSnapshot, Error>) -> Void) {
     queue.async {
       guard self.source.isSpotify, self.quitCompletion == nil else {

@@ -173,6 +173,11 @@ enum PitchE2E {
         charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!
       return window.performKeyEquivalent(with: event)
     }
+    var tracks = [Bool]()
+    guard let panelWindow = window as? PanelWindow else { throw StemError("Missing panel keyboard handler") }
+    panelWindow.changeTrack = { tracks.append($0) }
+    try require(shortcut(123, modifiers: .command) && shortcut(124, modifiers: .command)
+      && tracks == [false, true], "Command arrows did not select previous/next track")
     let shortcutStart = stemClock()
     try require(shortcut(124), "Forward shortcut was not handled")
     try require(stemClock() - shortcutStart < 0.25, "Shortcut blocked the UI waiting for Spotify")
