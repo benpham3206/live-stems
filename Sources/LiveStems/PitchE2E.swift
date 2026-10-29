@@ -146,16 +146,30 @@ enum PitchE2E {
     interval.selectItem(withTag: 15)
     interval.sendAction(interval.action, to: interval.target)
     let back = try button("Rewind 15 seconds"), forward = try button("Forward 15 seconds")
-    forward.performClick(nil)
-    try require(!forward.isEnabled && !back.isEnabled, "Seek accepted duplicate clicks while pending")
+    func shortcut(_ code: UInt16, modifiers: NSEvent.ModifierFlags = [.command, .shift]) -> Bool {
+      let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+        timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "",
+        charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)!
+      return window.performKeyEquivalent(with: event)
+    }
+    let shortcutStart = stemClock()
+    try require(shortcut(124), "Forward shortcut was not handled")
+    try require(stemClock() - shortcutStart < 0.25, "Shortcut blocked the UI waiting for Spotify")
+    try require(forward.cell?.isHighlighted == true && back.cell?.isHighlighted == false,
+      "Shortcut did not press only the forward button")
+    if let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds) {
+      content.cacheDisplay(in: content.bounds, to: bitmap)
+      try bitmap.representation(using: .png, properties: [:])?.write(to: out.appendingPathComponent("seek-pressed.png"))
+    }
+    try require(shortcut(123), "Pending shortcut was not handled")
     release.signal()
     let deadline = Date().addingTimeInterval(3)
-    while !forward.isEnabled && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    while controller.e2eSeeking && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
     try require(forward.isEnabled && position == 75, "Forward action failed")
-    back.performClick(nil)
+    try require(shortcut(123), "Rewind shortcut was not handled")
     let backDeadline = Date().addingTimeInterval(3)
-    while !back.isEnabled && Date() < backDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
-    try require(back.isEnabled && position == 60, "Backward action failed")
+    while controller.e2eSeeking && Date() < backDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    try require(back.isEnabled && position == 60 && fixtureWrites == 2, "Backward action or pending guard failed")
     let source = try popup("Audio source")
     let unsupported = NSMenuItem(title: "Unsupported fixture", action: nil, keyEquivalent: "")
     unsupported.representedObject = "test.unsupported"

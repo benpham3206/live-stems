@@ -7,8 +7,14 @@ final class PanelWindow: NSWindow {
   var quit: () -> Void = {}
   var cycleStem: (Int) -> Void = { _ in }
   var cycleSpectrum: () -> Void = {}
+  var seekRelative: (Bool) -> Void = { _ in }
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
-    guard event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command else {
+    let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+    if event.type == .keyDown, modifiers == [.command, .shift], [123, 124].contains(event.keyCode) {
+      seekRelative(event.keyCode == 124)
+      return true
+    }
+    guard event.type == .keyDown, modifiers == .command else {
       return super.performKeyEquivalent(with: event)
     }
     switch event.charactersIgnoringModifiers {
@@ -50,6 +56,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     spectrum.window.quit = window.quit
     spectrum.window.cycleStem = window.cycleStem
     spectrum.window.cycleSpectrum = window.cycleSpectrum
+    spectrum.window.seekRelative = window.seekRelative
     return spectrum
   }()
   private var sourcePicker: NSPopUpButton { panel.sourcePicker }
@@ -84,6 +91,10 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     window.quit = { [weak self] in self?.quitApp() }
     window.cycleStem = { [weak self] in self?.cycleStem($0) }
     window.cycleSpectrum = { [weak self] in self?.spectrum.cycle() }
+    window.seekRelative = { [weak self] forward in
+      guard let self else { return }
+      self.seek(forward ? self.panel.forward : self.panel.rewind)
+    }
     window.level = .floating
     window.titlebarAppearsTransparent = true
     window.titleVisibility = .hidden
@@ -159,7 +170,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     RunLoop.main.add(meterTimer!, forMode: .common)
     // E2E controllers (start override) never follow, so a test cannot change the saved source.
     if start == nil {
-      followTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.follow() }
+      followTimer = Timer.scheduledTimer(withTimeInterval: SourceActivity.pollInterval, repeats: true) { [weak self] _ in self?.follow() }
     }
     // The first launch shows the controls without making the app frontmost.
     presentWindow(reason: "launch", userInitiated: false)
@@ -167,6 +178,7 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   var e2eStatusButton: NSStatusBarButton? { item.button }
   var e2eWindow: NSWindow? { window }
   var e2eControls: StemControls { controls }
+  var e2eSeeking: Bool { seeking }
   func e2eApplyStatusForTest(enabled: Bool) {
     applyStatus(text: "E2E", output: "E2E", enabled: enabled, stems: true)
   }
@@ -295,8 +307,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
     panel.forward.title = "+\(seconds) s"
     panel.rewind.setAccessibilityLabel("Rewind \(seconds) seconds")
     panel.forward.setAccessibilityLabel("Forward \(seconds) seconds")
-    for button in [panel.rewind, panel.forward] { button.isEnabled = seekSource.isSpotify && !seeking }
-    panel.seekStep.isEnabled = seekSource.isSpotify && !seeking
+    for button in [panel.rewind, panel.forward] { button.isEnabled = seekSource.isSpotify }
+    panel.seekStep.isEnabled = seekSource.isSpotify
     if !seeking {
       panel.transportLabel.stringValue = seekSource.isSpotify ? "Spotify seeking" : "Seeking is available for Spotify only"
       panel.transportLabel.toolTip = panel.transportLabel.stringValue
@@ -305,6 +317,8 @@ final class MenuController: NSObject, NSWindowDelegate, NSMenuDelegate, NSMenuIt
   @objc private func seek(_ sender: NSButton) {
     guard !seeking, seekSource.isSpotify else { return }
     seeking = true
+    sender.highlight(true)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { sender.highlight(false) }
     updateSeekControls()
     panel.transportLabel.stringValue = "Seeking…"
     let seconds = panel.seekStep.selectedItem?.tag ?? 10
