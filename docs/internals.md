@@ -5,15 +5,10 @@ Engineering notes for the playback pipeline and its checks. The user guide is
 
 ## Playback
 
-`AudioSession` routes the final Original/stem mix through `PitchShift`. Rubber Band R3
-processes at unchanged speed with high-quality pitch and stereo centre focus.
-Rubber Band and libsamplerate are statically linked from pinned source. Zero is
-an exact, unbuffered bypass. Nonzero pitch requests processed output even with
-neutral stem gains; separator sleep is still based on the stem mix. The bounded
-processor reports its buffering delay to the output display clock. An offline
-probe observed about 115–134 ms at nonzero pitch; live end-to-end latency and
-macOS 14.2 runtime performance still need acceptance. Processor faults use the
-existing session failure path to restore source playback.
+`AudioSession` routes the final Original/stem mix through `PitchShift`. Apple's
+AVAudioUnitTimePitch changes pitch at rate 1 and bypasses at zero. Nonzero pitch
+requests output independently of stem separation. Pitch resets after seeks.
+Live end-to-end latency still requires measurement.
 
 The panel's Spotify seeks use a serialized fresh read, a bounded relative position
 write with an expected-track check, and a readback. Source switches and Quit invalidate

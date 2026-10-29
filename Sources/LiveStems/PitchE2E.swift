@@ -23,7 +23,7 @@ enum PitchE2E {
     try sourceSwitch(out)
     try panelActions(out)
     try JSONSerialization.data(withJSONObject: ["status": "pass", "pitch": measured,
-      "checks": ["production pitch graph", "dynamic pitch and reset", "full post-reset silence", "exact zero bypass", "bounded pitch output", "rapid explicit seeks flush queues",
+      "checks": ["production pitch graph", "dynamic pitch and reset", "full post-reset silence", "exact zero bypass", "rapid explicit seeks flush queues",
         "stale result rejection", "pitch-only takeover", "AppKit seek actions and unsupported source"]], options: [.prettyPrinted, .sortedKeys])
       .write(to: out.appendingPathComponent("pitch.json"))
     print("PASS pitch · production graph, dynamic reset, rapid seeks, and panel actions")
@@ -39,7 +39,7 @@ enum PitchE2E {
     let engine = AVAudioEngine()
     let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
     var frame = 0, sourceHz = 440.0
-    let pitch = try PitchShift(engine: engine, format: format) { _, _, count, list in
+    let pitch = PitchShift(engine: engine, format: format) { _, _, count, list in
       for buffer in UnsafeMutableAudioBufferListPointer(list) {
         let data = buffer.mData!.assumingMemoryBound(to: Float.self)
         for i in 0..<Int(count) { data[i] = Float(0.2 * sin(2 * .pi * sourceHz * Double(frame + i) / 44100)) }
@@ -75,7 +75,6 @@ enum PitchE2E {
       }
       try require(error < 0.000001, "Zero pitch altered the source samples")
     }
-    try require(!pitch.failed, "Steady pitch exhausted or overflowed its bounded output queue")
     pitch.set(2)
     let changed = try pull(44100)
     try require(abs(frequency(Array(changed[11025...])) - 440 * pow(2, 2.0 / 12)) < 2,
@@ -91,11 +90,10 @@ enum PitchE2E {
     let reset = try pull(44100)
     try require(abs(frequency(Array(reset[11025...])) - 880 * pow(2, 2.0 / 12)) < 2,
       "Pitch reset kept old signal or lost the selected key")
-    try require(!pitch.failed, "Pitch change/reset exhausted or overflowed its bounded output queue")
     for offset in [-12, 12, -2, 2] {
       pitch.set(offset)
       let samples = try pull(22050)
-      try require(samples.allSatisfy { $0.isFinite && abs($0) < 1 } && !pitch.failed,
+      try require(samples.allSatisfy { $0.isFinite && abs($0) < 1 },
         "Repeated pitch changes exhausted the bounded output queue")
     }
     pitch.set(0)

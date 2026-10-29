@@ -25,8 +25,7 @@ Live Stems sits in your menu bar. Its panel has:
 
 This branch adds a **Key** menu from −12 to +12 semitones. It changes the pitch of
 the final mix and keeps playback speed unchanged. **Zero** resets pitch alone.
-**Reset** clears pitch and the stem controls. Pitch works with Original and stem mixes. Transpose uses Rubber Band R3 for improved
-clarity. Nonzero pitch adds buffering; Zero bypasses it.
+**Reset** clears pitch and the stem controls. Pitch works with Original and stem mixes. Transpose uses Apple’s native pitch effect at unchanged playback speed. Zero bypasses it.
 
 For Spotify, choose **5, 10, 15, or 30 seconds**, then click the backward or forward
 button. Seeking preserves paused playback and clamps to the current track's bounds.
@@ -308,6 +307,6 @@ A self-contained disk-image build is available for development and release prepa
 
 ## Licence
 
-Live Stems is licensed under GPL-2.0-or-later. See [LICENSE](LICENSE). Rubber Band and the other bundled components retain their own notices; see [packaging licences](packaging/README.md#licence).
+Live Stems is licensed under GPL-2.0-or-later. See [LICENSE](LICENSE). Bundled components retain their own notices; see [packaging licences](packaging/README.md#licence).
 
 When Live Stems is focused, **⌘← / ⌘→** select the previous/next Spotify track. **⌘⇧← / ⌘⇧→** keep seeking by the chosen interval. Track navigation does not repeat when a key is held. Other sources do not receive Spotify commands.

@@ -105,16 +105,8 @@ def main():
     for path in models.iterdir(): path.chmod(0o444)
     models.chmod(0o555)
     shutil.copy2(PACKAGE/'LICENSE',resources/'LICENSE')
-    (resources/'OPEN-SOURCE.txt').write_text('Live Stems: GPL-2.0-or-later.\nSource: https://github.com/benpham3206/live-stems\nRubber Band and libsamplerate notices: see included corresponding-source archive.\nPython and package licences are retained under Runtime/lib/python3.12 and *.dist-info.\nModels: Meta Demucs, MIT; see model licence included here.\n')
+    (resources/'OPEN-SOURCE.txt').write_text('Live Stems: GPL-2.0-or-later.\nSource: https://github.com/benpham3206/live-stems\nPython and package licences are retained under Runtime/lib/python3.12 and *.dist-info.\nModels: Meta Demucs, MIT; see model licence included here.\n')
     shutil.copy2(PACKAGE/'packaging/DEMUCS-LICENSE',resources/'DEMUCS-LICENSE')
-    # Keep dependency notices in the binary distribution, not just the source archive.
-    notices=resources/'ThirdParty'
-    notices.mkdir()
-    for name in ['rubberband','libsamplerate']:
-        vendor=PACKAGE/'Sources/PitchCore/vendor'/('rubberband-4.0.0' if name=='rubberband' else 'libsamplerate-0.2.2')
-        for pattern in ['COPYING*','LICENSE*','AUTHORS*']:
-            for path in vendor.glob(pattern):
-                if path.is_file(): shutil.copy2(path,notices/(name+'-'+path.name))
     # uv rewrites the standalone Python dylib ID to its installed prefix.
     # Make every reference to that prefix relative before signing the copy.
     for path in runtime.rglob('*'):

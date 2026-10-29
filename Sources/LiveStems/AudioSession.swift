@@ -88,7 +88,7 @@ final class AudioSession {
         AudioDeviceCreateIOProcID(
           aggregate, ls_capture_callback, UnsafeMutableRawPointer(c), &ioProc),
         "Cannot prepare capture callback")
-      pitch = try PitchShift(engine: engine, format: modelFormat) { _, time, frames, list in
+      pitch = PitchShift(engine: engine, format: modelFormat) { _, time, frames, list in
         ls_render_timed(c, frames, list, time)
         return noErr
       }
@@ -120,7 +120,7 @@ final class AudioSession {
   }
   private var latency: Double?
   /// AVAudioEngine stops itself when the output device's format changes.
-  var outputStopped: Bool { !engine.isRunning || (pitch?.failed ?? false) }
+  var outputStopped: Bool { !engine.isRunning }
   /// Many apps play audio from helper processes: browsers (com.google.Chrome.helper,
   /// company.thebrowser.browser.helper) and Safari, whose audio comes from the
   /// shared WebKit GPU process. Tap the app, its helpers, and Safari's WebKit.
@@ -175,7 +175,6 @@ final class AudioSession {
   /// Move playback to the new default output (headphones, speakers). Capture,
   /// the queue, and the delay stay, so no new takeover is needed.
   func followOutput() throws {
-    guard !(pitch?.failed ?? false) else { throw StemError("Transpose buffer failed; source playback restored") }
     outputID = defaultOutput()
     engine.stop()
     engine.reset()

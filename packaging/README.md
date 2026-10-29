@@ -54,4 +54,4 @@ Before publication, validate model startup and separation from a relocated, read
 
 ## Licence
 
-Live Stems is GPL-2.0-or-later. Rubber Band uses GPL-2.0-or-later; libsamplerate uses BSD-2-Clause. The pinned upstream audio sources and notices are in `Sources/PitchCore/vendor`. Python and inference libraries retain their own licences in the bundle. Meta's Demucs models are under MIT; `DEMUCS-LICENSE` accompanies them. The local source archive includes the app, build scripts, and pinned audio source needed to build the app; the runtime lock and build procedure identify the separate Python dependencies.
+Live Stems is GPL-2.0-or-later. Python and inference libraries retain their own licences in the bundle. Meta's Demucs models are under MIT; `DEMUCS-LICENSE` accompanies them. The local source archive includes the app, build scripts, and app source needed to build the app; the runtime lock and build procedure identify the separate Python dependencies.
