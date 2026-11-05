@@ -21,6 +21,7 @@ final class SessionController {
   private var transpose = 0
   private var lastDeviceCheck = 0.0, lastDiagnostics = 0.0, lastStatus = ""
   private let trace: LiveTrace
+  private let startProcessorForTesting: (() -> Void)?
   private var lastTrace = 0.0
   private var quitCompletion: (() -> Void)?
   private var quitVersion: UInt64 = 0, quitStarted = 0.0
@@ -33,9 +34,11 @@ final class SessionController {
   var onStatus: ((String, String, Bool, Bool) -> Void)?
   init(traceDirectory: URL = LocalSettings.evidence, spotifyState: SpotifyState = SpotifyState(),
     source: AudioSource = .saved,
-    queue: DispatchQueue = DispatchQueue(label: "stems.session", qos: .userInitiated)) {
+    queue: DispatchQueue = DispatchQueue(label: "stems.session", qos: .userInitiated),
+    startProcessorForTesting: (() -> Void)? = nil) {
     self.queue = queue
     trace = LiveTrace(directory: traceDirectory)
+    self.startProcessorForTesting = startProcessorForTesting
     stateSource = spotifyState
     self.source = source
   }
@@ -77,6 +80,10 @@ final class SessionController {
     }
   }
   private func startProcessor(token: UInt64) {
+    if let startProcessorForTesting {
+      startProcessorForTesting()
+      return
+    }
     busy = true
     self.status(audio == nil ? "\(source.name) · starting" : "Original · restarting processor")
     let worker = WorkerClient(model: StemModel.saved)
@@ -356,6 +363,7 @@ final class SessionController {
     }
   }
   var e2eNeedsOutput: Bool { queue.sync { mixChangesSource } }
+  var e2eEnabledForQuitRace: Bool { queue.sync { enabled } }
   func changeTrack(forward: Bool) {
     queue.async {
       guard self.source.isSpotify, self.quitCompletion == nil else { return }
