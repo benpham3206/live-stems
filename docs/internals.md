@@ -42,7 +42,7 @@ that gain, so neutral controls give Original and all-stem mute gives silence.
 Resting stops GPU jobs but keeps the worker loaded. A control change wakes it,
 and stems fade in from the last captured second. Resting frames are not counted
 as steady stem frames. Reset returns all controls to neutral, selects stems, and starts a worker if none runs. Reopening
-the app during a Quit relay does the same.
+the app during or after a Quit relay restores the session's active state from when Quit began.
 Pause and a manual skip fade out at the notice with Spotify's own curve,
 measured by the `skip-probe` stage: gain (1 - t/T)^4, T = 280 ms for a pause
 and 100 ms for next, previous, or a seek. The fade plays the delay's worth of
